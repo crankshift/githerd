@@ -184,6 +184,47 @@ func TestStatusFetchTimesOutHangingRemotesAndMarksThemStale(t *testing.T) {
 	}
 }
 
+// Fetch turns terminal prompts off, even when the user turned them on, and
+// runs ssh in batch mode unless the user set their own SSH command.
+func TestStatusFetchNeverPrompts(t *testing.T) {
+	const ownCommand = "ssh -o ConnectTimeout=7"
+	for _, tc := range []struct {
+		name      string
+		env       []string
+		sshConfig string // core.sshCommand of the repo
+		wantSSH   string // how the fake ssh was called, up to the host
+	}{
+		{name: "default", wantSSH: "-o BatchMode=yes -o SendEnv=GIT_PROTOCOL"},
+		{name: "own GIT_SSH_COMMAND", env: []string{"GIT_SSH_COMMAND=" + ownCommand},
+			wantSSH: "-o ConnectTimeout=7 -o SendEnv=GIT_PROTOCOL"},
+		{name: "own core.sshCommand", sshConfig: ownCommand,
+			wantSSH: "-o ConnectTimeout=7 -o SendEnv=GIT_PROTOCOL"},
+		{name: "own GIT_SSH", env: []string{"GIT_SSH=ssh"},
+			wantSSH: "-o SendEnv=GIT_PROTOCOL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := gitfixture.New(t)
+			f.FakeSSH()
+			api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+			f.Git(api, "remote", "set-url", "origin", "ssh://git@git.example.com/acme/api.git")
+			if tc.sshConfig != "" {
+				f.Git(api, "config", "core.sshCommand", tc.sshConfig)
+			}
+			env := append(append(f.Env(), "GIT_TERMINAL_PROMPT=1"), tc.env...)
+
+			got := githerd(t, env, f.Path("work"), "status", "--fetch")
+
+			if got.code != 0 || !strings.HasSuffix(got.stdout, "0 of 1 repos need attention, 1 stale\n") {
+				t.Errorf("want exit 0 and the repo stale; got %+v", got)
+			}
+			want := []string{"GIT_TERMINAL_PROMPT=0 " + tc.wantSSH + " git@git.example.com git-upload-pack '/acme/api.git'"}
+			if calls := f.SSHCalls(); !reflect.DeepEqual(calls, want) {
+				t.Errorf("ssh calls:\n got %q\nwant %q", calls, want)
+			}
+		})
+	}
+}
+
 func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("web"), "work/repos/acme/web")

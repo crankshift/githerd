@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -89,9 +90,35 @@ func fetchOne(ctx context.Context, dir string, opts Options) Outcome {
 			return o
 		}
 	}
-	_, o.Err = git(ctx, dir, "fetch", "--quiet", o.Remote)
+	var env []string
+	if env, o.Err = fetchEnv(ctx, dir); o.Err != nil {
+		return o
+	}
+	_, o.Err = gitEnv(ctx, dir, env, "fetch", "--quiet", o.Remote)
 	o.Fetched = o.Err == nil
 	return o
+}
+
+// batchSSH is the SSH command for a fetch when the user has set none: in
+// batch mode, ssh asks for no password, passphrase or host key confirmation.
+const batchSSH = "ssh -o BatchMode=yes"
+
+// fetchEnv returns the environment for git fetch in dir, so that it never
+// prompts: terminal prompts are off, and ssh runs in batch mode unless the
+// user has set their own SSH command, which is left as it is.
+func fetchEnv(ctx context.Context, dir string) ([]string, error) {
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if os.Getenv("GIT_SSH_COMMAND") != "" || os.Getenv("GIT_SSH") != "" {
+		return env, nil
+	}
+	own, err := git(ctx, dir, "config", "--default=", "--get", "core.sshCommand")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(own)) == "" {
+		env = append(env, "GIT_SSH_COMMAND="+batchSSH)
+	}
+	return env, nil
 }
 
 // upstreamRemote returns the remote of the current branch's upstream, or ""
@@ -111,15 +138,23 @@ func upstreamRemote(ctx context.Context, dir string) (string, error) {
 	return "", sc.Err()
 }
 
-// git runs git in dir. Its error is the first line git printed on stderr:
-// git puts the cause there and generic advice after it.
-//
-// Git runs in a session of its own, so when ctx ends, the whole process
-// group is killed: ssh and other helpers git started die with it instead of
-// holding its output open.
+// git runs git in dir with the caller's environment.
 func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return gitEnv(ctx, dir, nil, args...)
+}
+
+// gitEnv runs git in dir with env, or the caller's environment when env is
+// nil. Its error is the first line git printed on stderr: git puts the cause
+// there and generic advice after it.
+//
+// Git reads nothing from stdin and runs in a session of its own, with no
+// controlling terminal to prompt on. When ctx ends, the whole session is
+// killed: ssh and other helpers git started die with it instead of holding
+// its output open.
+func gitEnv(ctx context.Context, dir string, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
