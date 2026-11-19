@@ -28,7 +28,7 @@ type Repo struct {
 	// remote branch.
 	Ahead     int
 	Behind    int       // commits the upstream has that the current branch lacks, as of the last fetch
-	FetchedAt time.Time // when the repo was last fetched, from FETCH_HEAD; see FetchedAt
+	FetchedAt time.Time // when the repo was last fetched, from FETCH_HEAD; zero when it never was, or its last fetch failed
 }
 
 // NoUpstream reports whether the current branch has no upstream branch. A
@@ -96,16 +96,16 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 		}
 	}
 
-	if r.FetchedAt, err = FetchedAt(ctx, dir); err != nil {
+	if r.FetchedAt, err = fetchedAt(ctx, dir); err != nil {
 		return Repo{}, err
 	}
 	return r, nil
 }
 
-// FetchedAt returns when the repo in dir was last fetched: the mtime of its
+// fetchedAt returns when the repo in dir was last fetched: the mtime of its
 // FETCH_HEAD. It returns the zero time when the repo was never fetched, and
 // also when its last fetch failed; see LastFetch.
-func FetchedAt(ctx context.Context, dir string) (time.Time, error) {
+func fetchedAt(ctx context.Context, dir string) (time.Time, error) {
 	at, failed, err := LastFetch(ctx, dir)
 	if failed {
 		at = time.Time{}

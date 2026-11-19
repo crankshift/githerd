@@ -19,8 +19,8 @@ import (
 	"github.com/crankshift/githerd/internal/status"
 )
 
-// Source is the --source of every report githerd makes.
-const Source = "githerd"
+// source is the --source of every report githerd makes.
+const source = "githerd"
 
 // Env is the Herdr plugin environment a sync runs in.
 type Env struct {

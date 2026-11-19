@@ -43,7 +43,7 @@ func (c cli) snapshot(ctx context.Context) (snapshot, error) {
 // other names githerd reports, all in one call. There is never a TTL: an
 // expired token would vanish, and a missing token reads as all clean.
 func (c cli) report(ctx context.Context, id string, seq uint64, toks map[string]string) error {
-	args := []string{"workspace", "report-metadata", id, "--source", Source, "--seq", strconv.FormatUint(seq, 10)}
+	args := []string{"workspace", "report-metadata", id, "--source", source, "--seq", strconv.FormatUint(seq, 10)}
 	for _, name := range tokenNames {
 		if v, ok := toks[name]; ok {
 			args = append(args, "--token", name+"="+v)

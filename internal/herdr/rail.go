@@ -94,7 +94,7 @@ func OpenRail(ctx context.Context, env Env) error {
 // MarkRail reports the rail's token on pane. It carries no --seq, so it
 // always applies.
 func MarkRail(ctx context.Context, env Env, pane string) error {
-	_, err := cli{bin: env.Bin}.run(ctx, "pane", "report-metadata", pane, "--source", Source, "--token", railToken+"="+railValue)
+	_, err := cli{bin: env.Bin}.run(ctx, "pane", "report-metadata", pane, "--source", source, "--token", railToken+"="+railValue)
 	return err
 }
 
