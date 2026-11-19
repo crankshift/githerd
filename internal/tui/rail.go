@@ -147,6 +147,9 @@ func (m Model) cursor(lines []line) int {
 // railView draws the rail: a header with the counts and the root, the repo
 // lines, and the keys.
 func railView(m Model, w, h int) Screen {
+	if m.loaded && len(m.roots) == 0 {
+		return noRootsView(m, w, h)
+	}
 	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
 	footer := Screen{rule(w), keys(w, "/", "filter", "f", "fetch", "q", "quit")}
 
@@ -165,6 +168,56 @@ func railView(m Model, w, h int) Screen {
 	}
 	screen = append(screen, footer...)
 	return screen[:min(len(screen), h)]
+}
+
+// noRootsView tells where to list the roots when there are none.
+func noRootsView(m Model, w, h int) Screen {
+	screen := Screen{{Spans: fit([]Span{{Text: "No roots configured.", Style: Style{Color: Yellow, Bold: true}}}, w)}, blank(w)}
+	texts := wrap("List the dirs githerd scans, one per line, such as ~/work, in", w)
+	texts = append(texts, chunks(m.opts.RootsFile, w)...) // whole, to be found
+	texts = append(texts, "")
+	texts = append(texts, wrap(fmt.Sprintf("The rail reads it again every %d seconds.", RefreshEvery/time.Second), w)...)
+	for _, text := range texts {
+		screen = append(screen, Line{Spans: fit([]Span{{Text: text}}, w)})
+	}
+	footer := Screen{rule(w), keys(w, "q", "quit")}
+	for len(screen) < h-len(footer) {
+		screen = append(screen, blank(w))
+	}
+	screen = append(screen[:min(len(screen), max(h-len(footer), 0))], footer...)
+	return screen[:min(len(screen), h)]
+}
+
+// wrap breaks text into lines of at most w columns at blanks. A word longer
+// than w gets a line of its own, which fit then cuts. Empty text is one
+// empty line.
+func wrap(text string, w int) []string {
+	var lines []string
+	cur := ""
+	for _, word := range strings.Fields(text) {
+		switch {
+		case cur == "":
+			cur = word
+		case width(cur)+1+width(word) <= w:
+			cur += " " + word
+		default:
+			lines = append(lines, cur)
+			cur = word
+		}
+	}
+	return append(lines, cur)
+}
+
+// chunks breaks s into pieces of w columns, for a path that must show
+// whole.
+func chunks(s string, w int) []string {
+	runes := []rune(s)
+	var out []string
+	for w > 0 && len(runes) > w {
+		out = append(out, string(runes[:w]))
+		runes = runes[w:]
+	}
+	return append(out, string(runes))
 }
 
 // counts is the header's first line: how many repos need attention and how

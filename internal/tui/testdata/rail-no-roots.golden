@@ -1,0 +1,14 @@
+│No roots configured.          │
+│                              │
+│List the dirs githerd scans,  │
+│one per line, such as ~/work, │
+│in                            │
+│~/.config/herdr/plugins/config│
+│/githerd/roots                │
+│                              │
+│The rail reads it again every │
+│30 seconds.                   │
+│                              │
+│                              │
+│──────────────────────────────│
+│q quit                        │

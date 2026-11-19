@@ -107,6 +107,54 @@ func TestRailFitsANarrowPane(t *testing.T) {
 	assertView(t, m, 24, 10, "rail-narrow")
 }
 
+// The rail shows the root that holds the pane it was opened from, the
+// deepest one when roots nest, and starts on the deepest repo holding that
+// pane's cwd: the root's own repo in a root workspace. Opened outside every
+// root, it shows the first root from the top.
+func TestRailShowsTheRootItWasOpenedInAndStartsOnItsRepo(t *testing.T) {
+	projects := tui.Root{Name: "~/projects", Dir: "/projects", Repos: []tui.Repo{
+		repo("/projects/blog", status.Repo{Branch: "main", Upstream: "origin/main"}),
+		repo("/projects/site", status.Repo{Branch: "main", Upstream: "origin/main", Uncommitted: 1}),
+	}}
+	sandbox := tui.Root{Name: "~/work/sandbox", Dir: "/work/sandbox", Repos: []tui.Repo{
+		repo("/work/sandbox/experiments", status.Repo{Branch: "main", Ahead: 2}),
+		repo("/work/sandbox/experiments/data", status.Repo{Branch: "main", Upstream: "origin/main"}),
+	}}
+	for _, c := range []struct {
+		cwd            string
+		root, selected string
+	}{
+		{"/projects/blog/posts", "~/projects", "blog"},
+		{"/projects", "~/projects", "site"},
+		{"/work", "~/work", ". (root)"},
+		{"/work/sandbox/experiments/data/raw", "~/work/sandbox", "experiments/data"},
+		{"/work/sandbox", "~/work/sandbox", "experiments"},
+		{"/elsewhere/api", "~/work", "repos/acme/api"},
+		{"", "~/work", "repos/acme/api"},
+	} {
+		m := railModel(t, c.cwd, work(), projects, sandbox)
+		if got := tui.View(m, 50, 18)[1].Text(); strings.TrimSpace(got) != c.root {
+			t.Errorf("opened in %q, the rail shows root %q, want %q", c.cwd, got, c.root)
+		}
+		if got := selected(m, 50, 18); !strings.HasPrefix(got, c.selected+" ") {
+			t.Errorf("opened in %q, the rail starts on %q, want %q", c.cwd, got, c.selected)
+		}
+	}
+}
+
+// With no roots configured, the rail says where to list them. It keeps
+// refreshing, so it picks the roots up once they are listed.
+func TestRailExplainsHowToConfigureRootsWhenThereAreNone(t *testing.T) {
+	m := railModel(t, "/work/repos/acme/api")
+	assertView(t, m, 30, 14, "rail-no-roots")
+
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(tui.RefreshEvery)})
+	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{work()}, Refresh: true, Synced: true})
+	if got, want := selected(m, 50, 18), "repos/acme/api"+strings.Repeat(" ", 31)+"●3 ⇡2"; got != want {
+		t.Errorf("once roots are listed, the rail starts on %q, want %q", got, want)
+	}
+}
+
 // selected returns the text of the selected line of the view, without the
 // blanks around it; "" when no line is selected.
 func selected(m tui.Model, width, height int) string {
