@@ -4,13 +4,13 @@
 package repopage
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crankshift/githerd/internal/status"
 )
 
 // The most commits Read lists in each of ToPush and ToPull, and in Log.
@@ -81,42 +81,24 @@ const (
 
 // Read returns what the repo page lists for the repo in dir.
 func Read(ctx context.Context, dir string) (Page, error) {
-	out, err := git(ctx, dir, "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all")
+	r, entries, err := status.ReadEntries(ctx, dir)
 	if err != nil {
 		return Page{}, err
 	}
-	var p Page
-	var oid string
-	tracked := false // the upstream exists, so ahead and behind are known
-	p.Changes, err = changes(out, func(key, value string) error {
-		switch key {
-		case "branch.oid":
-			oid = value
-		case "branch.head":
-			p.Detached = value == "(detached)"
-		case "branch.upstream":
-			p.Upstream = value
-		case "branch.ab":
-			tracked = true
-			if _, err := fmt.Sscanf(value, "+%d -%d", &p.Ahead, &p.Behind); err != nil {
-				return fmt.Errorf("parsing %q: %v", value, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
+	p := Page{Upstream: r.Upstream, Detached: r.Detached != "", Ahead: r.Ahead, Behind: r.Behind}
+	if p.Changes, err = changes(entries); err != nil {
 		return Page{}, fmt.Errorf("%s: git status: %v", dir, err)
 	}
 	if p.Branches, err = branches(ctx, dir); err != nil {
 		return Page{}, err
 	}
-	if oid == "(initial)" {
-		return p, nil // no commits yet
+	if r.NoCommits {
+		return p, nil
 	}
 
 	switch {
 	case p.Detached:
-	case tracked:
+	case p.Upstream != "":
 		if p.ToPush, err = commits(ctx, dir, maxCommits, "@{upstream}..HEAD"); err != nil {
 			return Page{}, err
 		}
@@ -125,12 +107,8 @@ func Read(ctx context.Context, dir string) (Page, error) {
 		}
 	default:
 		// No upstream, or one whose remote branch is gone: list what would
-		// be lost if this repo disappeared.
-		p.Upstream = ""
+		// be lost if this repo disappeared, which Ahead counts.
 		if p.ToPush, err = commits(ctx, dir, maxCommits, "HEAD", "--not", "--remotes"); err != nil {
-			return Page{}, err
-		}
-		if p.Ahead, err = count(ctx, dir, "HEAD", "--not", "--remotes"); err != nil {
 			return Page{}, err
 		}
 	}
@@ -157,7 +135,7 @@ const commitFormat = "--format=%H%x00%h%x00%an%x00%at%x00%s"
 // commits returns at most n commits of the revisions in revs, newest first.
 func commits(ctx context.Context, dir string, n int, revs ...string) ([]Commit, error) {
 	args := append([]string{"log", "--no-color", "--no-show-signature", commitFormat, "-n", strconv.Itoa(n)}, revs...)
-	out, err := git(ctx, dir, append(args, "--")...)
+	out, err := status.Git(ctx, dir, append(args, "--")...)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +159,7 @@ func commits(ctx context.Context, dir string, n int, revs ...string) ([]Commit, 
 
 // branches returns the repo's branches in the order Page lists them.
 func branches(ctx context.Context, dir string) ([]Branch, error) {
-	out, err := git(ctx, dir, "for-each-ref",
+	out, err := status.Git(ctx, dir, "for-each-ref",
 		"--format=%(refname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(symref)",
 		"refs/heads", "refs/remotes")
 	if err != nil {
@@ -234,37 +212,13 @@ func branches(ctx context.Context, dir string) ([]Branch, error) {
 	return all, nil
 }
 
-// count returns how many commits the revisions in revs hold.
-func count(ctx context.Context, dir string, revs ...string) (int, error) {
-	out, err := git(ctx, dir, append(append([]string{"rev-list", "--count"}, revs...), "--")...)
-	if err != nil {
-		return 0, err
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, fmt.Errorf("%s: git rev-list: %v", dir, err)
-	}
-	return n, nil
-}
-
-// changes parses the entries of `git status --porcelain=v2 -z`, and hands
-// each header line to header as a key and a value.
-func changes(out []byte, header func(key, value string) error) ([]Change, error) {
+// changes returns the changes that the entries of a git status list.
+func changes(entries []status.Entry) ([]Change, error) {
 	var unmerged, staged, unstaged, untracked []Change
-	entries := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
-	for i := 0; i < len(entries); i++ {
-		e := entries[i]
-		if e == "" {
-			continue
-		}
+	for _, entry := range entries {
+		e := entry.Line
 		var fields []string
 		switch e[0] {
-		case '#':
-			key, value, _ := strings.Cut(strings.TrimPrefix(e, "# "), " ")
-			if err := header(key, value); err != nil {
-				return nil, err
-			}
-			continue
 		case '1':
 			fields = strings.SplitN(e, " ", 9)
 		case '2':
@@ -280,14 +234,7 @@ func changes(out []byte, header func(key, value string) error) ([]Change, error)
 		if len(fields) < 9 || len(fields[1]) != 2 {
 			return nil, fmt.Errorf("parsing %q", e)
 		}
-		xy, path, orig := fields[1], fields[len(fields)-1], ""
-		if e[0] == '2' {
-			if i+1 >= len(entries) {
-				return nil, fmt.Errorf("parsing %q: no original path", e)
-			}
-			i++
-			orig = entries[i]
-		}
+		xy, path, orig := fields[1], fields[len(fields)-1], entry.Orig
 		if e[0] == 'u' {
 			unmerged = append(unmerged, Change{Area: Unmerged, Code: xy, Path: path})
 			continue
@@ -311,23 +258,4 @@ func changes(out []byte, header func(key, value string) error) ([]Change, error)
 		}
 	}
 	return append(append(append(unmerged, staged...), unstaged...), untracked...), nil
-}
-
-// git runs git in dir without taking optional locks, so it never writes to
-// the repo, not even to refresh the index, and never competes with git
-// commands the user or an agent runs there.
-func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks"}, args...)...)
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, fmt.Errorf("%s: git %s: %s", dir, args[0], msg)
-	}
-	return out, nil
 }

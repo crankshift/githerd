@@ -9,6 +9,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+
+	"github.com/crankshift/githerd/internal/status"
 )
 
 // Limits on what Show reads, so a huge file or commit can't stall the page
@@ -52,11 +54,11 @@ func Show(ctx context.Context, dir string, it Item) (Detail, error) {
 // file it changed; for a merge, against its first parent.
 func commitDiff(ctx context.Context, dir, hash string) (Detail, error) {
 	show := []string{"show", "--no-color", "--no-ext-diff", "--no-show-signature", "--diff-merges=first-parent", "-M"}
-	msg, err := git(ctx, dir, append(show, "--no-patch", "--format=%B", hash, "--")...)
+	msg, err := status.Git(ctx, dir, append(show, "--no-patch", "--format=%B", hash, "--")...)
 	if err != nil {
 		return Detail{}, err
 	}
-	raw, err := git(ctx, dir, append(show, "--format=", "--raw", "-z", hash, "--")...)
+	raw, err := status.Git(ctx, dir, append(show, "--format=", "--raw", "-z", hash, "--")...)
 	if err != nil {
 		return Detail{}, err
 	}
