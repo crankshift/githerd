@@ -1,6 +1,6 @@
 # Code review: githerd v1 (`539b873...` main)
 
-Status: ready-for-agent
+Status: resolved
 
 Two-axis review after tickets 01–08. One implementer fixes every item below, then ticks it.
 
@@ -42,3 +42,19 @@ Judgement calls (smells). Fix the ones where the copies behave differently; fix 
 - With no roots, githerd still clears tokens it reported earlier.
 - A clean repo with no upstream shows `∅` alone.
 - Small extras (`q`/Ctrl-C, problem line, `help`, `--fetch-timeout`, unmerged files first, gone branches, fetch age in the page header) stay.
+
+## Comments
+
+Decisions made while fixing, where an item left room or turned out different:
+
+- **S2.** The "clone" in the status command and the repo page was in code comments, not messages; those, the fixtures, the test comments and the manifest's top comment now use the glossary's words. ADR-0001's title keeps "clones": it records the decision as made.
+- **S4/S5.** Each root is resolved before discovery, so repo dirs, `Root.Dir` and `Workspace.Root`/`Repo` all have symlinks resolved and the rail converts nothing. `Scan` (disk only, the rail's first view) and `Look` (plus the snapshot mapping) share `Sync`'s scan, nested-root dedupe included. `internal/paths` has the one `Within` and `Deepest`.
+- **S7.** The stale mark moved into `status.Repo.Stale`, set by `fetch.MarkStale` and counted by `status.Tally`; `herdr.Repo` is gone and `tui.Repo` is an alias. The status command still maps outcomes to remote names, only for its stderr line `fetch origin: …`.
+- **S8.** Done for entry kinds (each is a type with its row and head) and branch state (one `tracking` returns the row's and the detail's form). Left: `repopage.Item`'s exactly-one-field switch in `Show`. `Item` is the comparable key the TUI caches details by and the payload of `LoadDetail`; `Show` is now the only place that switches on it, and an interface would churn both test seams for no behaviour change.
+- **P1.** `depth=N` is the last blank-separated field of a roots line. A value that is not a whole number leaves the line out, named on stderr (exit 1), as a relative root does.
+- **P3.** A forced sync waits for the lock (polling every 50ms, cancelled with the rail) instead of leaving the mark: a mark would hand the run to the holder's rerun, which doesn't force, and `f` would fetch nothing. Its own rerun, if it finds a mark, fetches with the TTL alone.
+- **P4.** The binary test stands in for the sync that takes the lock first by replacing `sync.lock` in the state dir and holding it, so the race is deterministic.
+- **P5.** The split falls back to the rail only on Herdr's `pane_not_found`; any other error shows on the note line as before. The rail learns the pane from the context's `focused_pane_id`.
+- **P6.** `s` and `L` unzoom the rail's pane from the rail too, not only from the repo page: `z` can zoom the rail, the model doesn't track zoom, and `--off` on an unzoomed pane changes nothing.
+- **P7.** The rail's hints wrap to two lines when one is too narrow, so the list loses a row. At about 24 columns `f` and `q` are still cut, as the old single line cut everything after `o ws`. The page keeps one line: it is zoomed.
+- **P8.** The action's `contexts` is `["global"]`: the sync covers every workspace, and the research note says the field's effect is undocumented. The README entry ends in `>/dev/null`, because `plugin action invoke` prints the started command's record. This replaces ticket 07's workaround with its own state dir and lock.

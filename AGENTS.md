@@ -5,7 +5,7 @@ githerd reports which git repos under a root are uncommitted, ahead or behind, i
 ## Ground rules
 
 - **Standard library only** (ADR-0002). `go.mod` has no `require`; keep it that way.
-- **Read-only** (ADR-0004). The only writes to a repo are `git fetch` and, after a failed fetch, an empty `FETCH_HEAD` that records the failure (ticket 08). Run git reads with `--no-optional-locks`.
+- **Read-only** (ADR-0004). The only writes to a repo are `git fetch` and, after a failed fetch, an empty `FETCH_HEAD` that records the failure (ticket 08). Run git reads with `--no-optional-locks`, as `status.Git` does.
 - **Linux and macOS.** `internal/term` builds only there, and the sync lock uses `flock`.
 - **The fake `herdr` only.** Tests reach Herdr through `$HERDR_BIN_PATH`, pointed at the fake. The real `herdr` would act on your live Herdr session.
 - **Glossary words** from `GLOSSARY.md` in code, tests and docs: repo, root workspace, mapped workspace, rail, repo page, uncommitted, ahead, behind, stale.
@@ -13,9 +13,10 @@ githerd reports which git repos under a root are uncommitted, ahead or behind, i
 ## Layout
 
 - `main.go`, `status.go`, `herdr.go`, `rail.go`: the `githerd` command. `rail.go` is the rail's terminal layer: it runs the model's commands and draws its view.
-- `internal/discovery`, `internal/status`, `internal/fetch`: find repos under a root, read each one's state, fetch with the TTL. The TTL and stale rule live in `fetch` (`Run`, `Last`), so every caller shares them.
-- `internal/herdr`: the Herdr adapter. `Sync` is the one entry point for the roots file, workspace mapping, tokens, `--seq` and the lock. It also holds the rail action and the Herdr requests the rail makes.
-- `internal/repopage`: git reads for the repo page. `Read` lists the sections; `Show` reads the detail of one line.
+- `internal/discovery`, `internal/status`, `internal/fetch`: find repos under a root, read each one's state, fetch with the TTL. The TTL and stale rule live in `fetch` (`Run`, `Last`, `MarkStale`), so every caller shares them.
+- `internal/herdr`: the Herdr adapter. `Sync` is the one entry point for reports, `--seq` and the lock; given repo dirs to force, it fetches them whatever the TTL and waits for the lock. `Scan` and `Look` read the same roots, repos and workspace mapping without reporting, for the rail. It also holds the rail action and the Herdr requests the rail makes.
+- `internal/repopage`: git reads for the repo page. `Read` lists the sections, its branch state from `status.ReadEntries`; `Show` reads the detail of one line.
+- `internal/paths`, `internal/parallel`: the deepest dir that holds a path, and the worker pool, shared by the adapter, the TUI, `fetch` and `status`.
 - `internal/tui`: the rail and the repo page as a pure model: `Update(model, msg)` returns the next model and `[]Cmd`, and `View(model, w, h)` returns a `Screen`. It does no I/O. Herdr requests are `Cmd` values.
 - `internal/term`: raw mode, the alternate screen, size, key decoding.
 - `internal/gitfixture`: real git repos in temp dirs for tests.
