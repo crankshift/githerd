@@ -9,6 +9,16 @@ import (
 // each one: it sets those that apply and clears the others.
 var tokenNames = []string{"repos", "changes", "stale"}
 
+// hasAny reports whether toks holds any of names.
+func hasAny(toks map[string]string, names []string) bool {
+	for _, name := range names {
+		if _, ok := toks[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // rootTokens are the tokens of a root workspace: how many of the root's
 // repos need attention, of how many, and how many are stale.
 func rootTokens(root Root) map[string]string {

@@ -144,6 +144,39 @@ func TestSyncReportsNothingWithoutRoots(t *testing.T) {
 	}
 }
 
+// A workspace outside every root, say after its pane left the root or the
+// root left the roots file, has the tokens githerd reported to it before
+// cleared. Other workspaces outside are left alone, and so are other
+// sources' tokens.
+func TestSyncClearsItsTokensFromWorkspacesOutsideEveryRoot(t *testing.T) {
+	for name, roots := range map[string]string{
+		"root configured": "work\n",
+		"no roots left":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := gitfixture.New(t)
+			f.Clone(f.Remote("api"), "work/repos/acme/api")
+			elsewhere := f.Path("elsewhere")
+			h := newFakeHerdr(t, f)
+			if roots != "" {
+				roots = f.Path(roots)
+			}
+			h.roots(roots)
+			h.snapshot(
+				workspace{id: "w1", tabs: [][]pane{{{cwd: elsewhere}}}, tokens: map[string]string{"changes": "●3", "load": "90"}},
+				workspace{id: "w2", tabs: [][]pane{{{cwd: elsewhere}}}, tokens: map[string]string{"repos": "2/5", "stale": "⚠1"}},
+				workspace{id: "w3", tabs: [][]pane{{{cwd: elsewhere}}}, tokens: map[string]string{"load": "90"}},
+				at("w4", elsewhere),
+			)
+
+			h.assertSynced(h.sync(), map[string]tokens{
+				"w1": {"changes": cleared, "repos": cleared, "stale": cleared},
+				"w2": {"changes": cleared, "repos": cleared, "stale": cleared},
+			})
+		})
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.

@@ -105,6 +105,8 @@ func Sync(ctx context.Context, env Env) (Result, error) {
 		case root != nil:
 			w.Root = root.Path
 			toks = rootTokens(*root)
+		case hasAny(sw.Tokens, tokenNames):
+			toks = map[string]string{} // outside every root now: clear what githerd reported
 		}
 		res.Workspaces = append(res.Workspaces, w)
 		if toks == nil {
