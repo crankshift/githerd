@@ -221,6 +221,44 @@ func TestSyncSequencesEachSyncAfterTheLast(t *testing.T) {
 	}
 }
 
+// An agent turning done or idle may have left changes behind, so sync runs;
+// any other agent status leaves Herdr alone. Other hooks always sync.
+func TestSyncOnAnAgentStatusChangeRunsOnlyWhenTheAgentIsDoneOrIdle(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api))
+	agentStatus := func(status string) []string {
+		return []string{"HERDR_PLUGIN_EVENT=pane.agent_status_changed",
+			`HERDR_PLUGIN_EVENT_JSON={"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed",` +
+				`"pane_id":"w1:p1","workspace_id":"w1","agent_status":"` + status + `","agent":"claude"}}`}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		env   []string
+		syncs bool
+	}{
+		{"agent done", agentStatus("done"), true},
+		{"agent idle", agentStatus("idle"), true},
+		{"agent working", agentStatus("working"), false},
+		{"agent blocked", agentStatus("blocked"), false},
+		{"agent unknown", agentStatus("unknown"), false},
+		{"workspace focused", []string{"HERDR_PLUGIN_EVENT=workspace.focused",
+			`HERDR_PLUGIN_EVENT_JSON={"event":"workspace_focused","data":{"type":"workspace_focused","workspace_id":"w1"}}`}, true},
+		{"startup", []string{"HERDR_PLUGIN_EVENT=startup"}, true},
+	} {
+		got := h.sync(tc.env...)
+		if got.code != 0 || got.stdout != "" || got.stderr != "" {
+			t.Errorf("%s: want exit 0 and no output; got %+v", tc.name, got)
+		}
+		if synced := len(h.calls()) > 0; synced != tc.syncs {
+			t.Errorf("%s: synced %v, want %v", tc.name, synced, tc.syncs)
+		}
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.

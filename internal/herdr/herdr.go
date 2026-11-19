@@ -7,6 +7,7 @@ package herdr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -24,16 +25,20 @@ type Env struct {
 	Bin       string // HERDR_BIN_PATH: the herdr CLI
 	ConfigDir string // HERDR_PLUGIN_CONFIG_DIR: holds the roots file
 	StateDir  string // HERDR_PLUGIN_STATE_DIR: holds the sync lock and the last --seq
+	// Event is HERDR_PLUGIN_EVENT_JSON, the event a hook runs for; empty
+	// when the sync was not triggered by an event.
+	Event string
 }
 
 // EnvFrom reads the Env from Herdr's plugin variables through getenv, such
-// as os.Getenv. It fails when one is missing: outside Herdr there is no
-// session to report to.
+// as os.Getenv. It fails when one of the paths is missing: outside Herdr
+// there is no session to report to.
 func EnvFrom(getenv func(string) string) (Env, error) {
 	env := Env{
 		Bin:       getenv("HERDR_BIN_PATH"),
 		ConfigDir: getenv("HERDR_PLUGIN_CONFIG_DIR"),
 		StateDir:  getenv("HERDR_PLUGIN_STATE_DIR"),
+		Event:     getenv("HERDR_PLUGIN_EVENT_JSON"),
 	}
 	for _, v := range []struct{ name, value string }{
 		{"HERDR_BIN_PATH", env.Bin},
@@ -79,8 +84,36 @@ type Workspace struct {
 }
 
 // Sync reports the state of every repo under the configured roots to the
-// workspaces of the Herdr session.
+// workspaces of the Herdr session. For an agent status change it does
+// nothing unless the agent turned done or idle.
 func Sync(ctx context.Context, env Env) (Result, error) {
+	if !worthSyncing(env.Event) {
+		return Result{}, nil
+	}
+	return syncOnce(ctx, env)
+}
+
+// worthSyncing reports whether the hook event in eventJSON can have changed
+// what githerd reports. An agent that turned done or idle may have left
+// changes behind; one that turned working or blocked has not finished yet.
+func worthSyncing(eventJSON string) bool {
+	var event struct {
+		Event string `json:"event"`
+		Data  struct {
+			AgentStatus string `json:"agent_status"`
+		} `json:"data"`
+	}
+	if eventJSON == "" || json.Unmarshal([]byte(eventJSON), &event) != nil {
+		return true // a spare sync costs less than a missed one
+	}
+	if event.Event != "pane_agent_status_changed" {
+		return true
+	}
+	return event.Data.AgentStatus == "done" || event.Data.AgentStatus == "idle"
+}
+
+// syncOnce runs one sync.
+func syncOnce(ctx context.Context, env Env) (Result, error) {
 	var res Result
 	paths, errs := readRoots(filepath.Join(env.ConfigDir, rootsFile))
 	res.Errs = append(res.Errs, errs...)
