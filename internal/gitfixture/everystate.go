@@ -10,16 +10,16 @@ const (
 	NoUpstreamRepo  = "repos/tools/cli"          // branch spike/parser with three commits on no remote
 	DetachedRepo    = "repos/tools/lint-rules"   // detached at tag v1.4.0, clean
 	NoRemoteRepo    = "sandbox/experiments"      // two commits and no remote at all
-	NestedRepo      = "sandbox/experiments/data" // clean clone nested in NoRemoteRepo
+	NestedRepo      = "sandbox/experiments/data" // clean repo nested in NoRemoteRepo
 )
 
 // EveryState builds a root at work/ in the fixture dir and returns its path.
-// The root is itself a clean repo that ignores the clones under it, and it
+// The root is itself a clean repo that ignores the repos under it, and it
 // holds one repo in each state named by the constants above.
 func (f *Fixture) EveryState() string {
 	f.t.Helper()
 	root := f.Clone(f.Remote("work"), "work")
-	f.Commit(root, ".gitignore", "repos/\nsandbox/\n", "Ignore the clones")
+	f.Commit(root, ".gitignore", "repos/\nsandbox/\n", "Ignore the repos")
 	f.Git(root, "push", "--quiet")
 	at := func(rel string) string { return "work/" + rel }
 
@@ -57,7 +57,7 @@ func (f *Fixture) EveryState() string {
 	f.Git(lint, "switch", "--quiet", "--detach", "v1.4.0")
 
 	experiments := f.Init(at(NoRemoteRepo))
-	f.Commit(experiments, ".gitignore", "data/\n", "Ignore the data clone")
+	f.Commit(experiments, ".gitignore", "data/\n", "Ignore the data repo")
 	f.Commit(experiments, "notes.md", "ideas\n", "Start notes")
 	f.Clone(f.Remote("data"), at(NestedRepo))
 

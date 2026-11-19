@@ -1,5 +1,5 @@
-# githerd: which git repos under a root have uncommitted, unpushed or
-# unpulled work, in Herdr's sidebar.
+# githerd: which git repos under a root are uncommitted, ahead or behind,
+# in Herdr's sidebar.
 id = "githerd"
 name = "githerd"
 version = "0.1.0"

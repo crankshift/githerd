@@ -87,7 +87,7 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 		r.Detached = strings.TrimSpace(string(short))
 	case !tracked:
 		// No upstream, or one whose remote branch is gone: count what
-		// would be lost if this clone disappeared.
+		// would be lost if this repo disappeared.
 		r.Upstream = ""
 		if oid != "(initial)" {
 			if r.Ahead, err = count(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); err != nil {

@@ -72,14 +72,14 @@ func TestStatusShowsDetachedCommitWithoutCountingItAsNeedingAttention(t *testing
 func TestStatusFindsTheRootAndNestedReposButSkipsHiddenDirsAndNodeModules(t *testing.T) {
 	f := gitfixture.New(t)
 	root := f.Clone(f.Remote("work"), "work")
-	f.Commit(root, ".gitignore", "repos/\nsandbox/\nnode_modules/\n.cache/\n", "Ignore the clones")
+	f.Commit(root, ".gitignore", "repos/\nsandbox/\nnode_modules/\n.cache/\n", "Ignore the repos")
 	f.Git(root, "push", "--quiet")
 
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	f.Git(api, "worktree", "add", "--quiet", "-b", "hotfix", "../api-hotfix", "origin/main")
 
 	experiments := f.Init("work/sandbox/experiments")
-	f.Commit(experiments, ".gitignore", "data/\n", "Ignore the data clone")
+	f.Commit(experiments, ".gitignore", "data/\n", "Ignore the data repo")
 	f.Clone(f.Remote("data"), "work/sandbox/experiments/data")
 
 	f.Clone(f.Remote("mirror"), "work/.cache/mirror")
@@ -101,7 +101,7 @@ func TestStatusScansThreeLevelsBelowTheRootUnlessDepthIsSet(t *testing.T) {
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("scripts"), "work/scripts")
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
-	f.Commit(api, ".gitignore", "vendor/\n", "Ignore vendored clones")
+	f.Commit(api, ".gitignore", "vendor/\n", "Ignore vendored repos")
 	f.Git(api, "push", "--quiet")
 	f.Clone(f.Remote("sdk"), "work/repos/acme/api/vendor/sdk")
 	root := f.Path("work")

@@ -125,7 +125,7 @@ func Read(ctx context.Context, dir string) (Page, error) {
 		}
 	default:
 		// No upstream, or one whose remote branch is gone: list what would
-		// be lost if this clone disappeared.
+		// be lost if this repo disappeared.
 		p.Upstream = ""
 		if p.ToPush, err = commits(ctx, dir, maxCommits, "HEAD", "--not", "--remotes"); err != nil {
 			return Page{}, err

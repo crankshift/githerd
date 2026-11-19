@@ -64,7 +64,7 @@ func TestSyncReadsTheRootsFile(t *testing.T) {
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	f.Clone(f.Remote("old"), "attic/old")
 	h := newFakeHerdr(t, f)
-	h.roots("# Where my clones live\n" +
+	h.roots("# Where my repos live\n" +
 		"~/projects\n" +
 		"\n" +
 		"   " + f.Path("work") + "  \n" +
@@ -499,7 +499,7 @@ func TestSyncFetchesWithTheTTLAndFlagsStaleRepos(t *testing.T) {
 	f := gitfixture.New(t)
 	docsRemote := f.Remote("docs")
 	docs := f.Clone(docsRemote, "work/repos/acme/docs")
-	f.PushElsewhere(docsRemote, "main", 1) // never fetched since the clone: fetched now, so behind
+	f.PushElsewhere(docsRemote, "main", 1) // never fetched since it was cloned: fetched now, so behind
 	billingRemote := f.Remote("billing")
 	billing := f.Clone(billingRemote, "work/repos/acme/billing")
 	f.FetchedAgo(billing, 5*time.Minute)

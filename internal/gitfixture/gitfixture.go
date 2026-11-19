@@ -1,5 +1,6 @@
 // Package gitfixture builds real git repos in temp dirs for black-box tests:
-// bare "remotes" plus clones arranged into every repo state githerd reports.
+// bare "remotes" plus repos cloned from them, arranged into every repo state
+// githerd reports.
 //
 // Everything runs in a hermetic environment: no user or system git config, a
 // temp HOME, and fixed author and committer identities and dates, so commit
@@ -17,13 +18,13 @@ import (
 	"time"
 )
 
-// Fixture is a temp dir holding bare remotes, scratch clones and a root.
+// Fixture is a temp dir holding bare remotes, scratch repos and a root.
 type Fixture struct {
 	t      testing.TB
 	dir    string
 	home   string
 	env    []string
-	pushes int // scratch clones made by PushElsewhere
+	pushes int // scratch repos made by PushElsewhere
 }
 
 // New creates an empty fixture in a fresh temp dir.
@@ -103,7 +104,7 @@ func (f *Fixture) Init(path string) string {
 }
 
 // Clone clones remote into path, given relative to the fixture dir, and
-// returns the clone's absolute path.
+// returns the new repo's absolute path.
 func (f *Fixture) Clone(remote, path string) string {
 	f.t.Helper()
 	dst := f.Path(path)
@@ -112,8 +113,8 @@ func (f *Fixture) Clone(remote, path string) string {
 	return dst
 }
 
-// PushElsewhere adds n commits to branch of remote from a scratch clone, as
-// a teammate would, so existing clones fall behind once they fetch.
+// PushElsewhere adds n commits to branch of remote from a scratch repo, as
+// a teammate would, so repos cloned from it fall behind once they fetch.
 func (f *Fixture) PushElsewhere(remote, branch string, n int) {
 	f.t.Helper()
 	f.pushes++

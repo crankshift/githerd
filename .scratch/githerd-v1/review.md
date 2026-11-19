@@ -8,9 +8,9 @@ Two-axis review after tickets 01–08. One implementer fixes every item below, t
 
 Hard (documented standard breached):
 
-- [ ] S1. AGENTS.md "Run git reads with `--no-optional-locks`": the fetch module's git reads (`config --get core.sshCommand`, `for-each-ref`) lack the flag.
-- [ ] S2. Glossary vocabulary: the manifest's top comment says "unpushed or unpulled". Use ahead and behind. User-facing messages say "clone" (glossary: avoid) in the status command and the repo page; use repo. Also fix fixture and test comments where cheap. A method named after the git verb `clone` is fine.
-- [ ] S3. ADR-0004 says githerd never writes to a repo, but a failed fetch empties `FETCH_HEAD` (ticket 08). Amend the ADR with a Consequences note: githerd writes only git's own fetch metadata, never the working tree, index, refs or config.
+- [x] S1. AGENTS.md "Run git reads with `--no-optional-locks`": the fetch module's git reads (`config --get core.sshCommand`, `for-each-ref`) lack the flag.
+- [x] S2. Glossary vocabulary: the manifest's top comment says "unpushed or unpulled". Use ahead and behind. User-facing messages say "clone" (glossary: avoid) in the status command and the repo page; use repo. Also fix fixture and test comments where cheap. A method named after the git verb `clone` is fine.
+- [x] S3. ADR-0004 says githerd never writes to a repo, but a failed fetch empties `FETCH_HEAD` (ticket 08). Amend the ADR with a Consequences note: githerd writes only git's own fetch metadata, never the working tree, index, refs or config.
 
 Judgement calls (smells). Fix the ones where the copies behave differently; fix the rest where it's straightforward and tests stay green:
 
