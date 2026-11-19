@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/crankshift/githerd/internal/discovery"
 	"github.com/crankshift/githerd/internal/status"
@@ -21,6 +23,7 @@ const readWorkers = 8
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "print JSON instead of a table")
 	depth := fs.Int("depth", discovery.DefaultDepth, "directory levels below the root to scan")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -54,7 +57,14 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "githerd:", err)
 	}
 
-	printTable(stdout, root, repos)
+	if *asJSON {
+		if err := printJSON(stdout, root, repos); err != nil {
+			fmt.Fprintln(stderr, "githerd:", err)
+			return 1
+		}
+	} else {
+		printTable(stdout, root, repos)
+	}
 	if len(errs) > 0 {
 		return 1
 	}
@@ -138,6 +148,58 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 		}
 	}
 	fmt.Fprintf(w, "%d of %d repos need attention\n", attention, len(repos))
+}
+
+// jsonReport is the shape of `githerd status --json`.
+type jsonReport struct {
+	Root  string     `json:"root"`
+	Repos []jsonRepo `json:"repos"`
+}
+
+// jsonRepo is one repo in a jsonReport. Pointer fields are null when the
+// state does not apply.
+type jsonRepo struct {
+	Path           string  `json:"path"`
+	Branch         *string `json:"branch"`
+	Detached       *string `json:"detached"`
+	Upstream       *string `json:"upstream"`
+	Uncommitted    int     `json:"uncommitted"`
+	Ahead          int     `json:"ahead"`
+	Behind         int     `json:"behind"`
+	NeedsAttention bool    `json:"needsAttention"`
+	Stale          *string `json:"stale"`     // fetch error; null until fetching exists
+	FetchedAt      *string `json:"fetchedAt"` // RFC 3339, UTC
+}
+
+func printJSON(w io.Writer, root string, repos []status.Repo) error {
+	report := jsonReport{Root: root, Repos: make([]jsonRepo, 0, len(repos))}
+	for _, r := range repos {
+		j := jsonRepo{
+			Path:           relPath(root, r.Dir),
+			Branch:         nullable(r.Branch),
+			Detached:       nullable(r.Detached),
+			Upstream:       nullable(r.Upstream),
+			Uncommitted:    r.Uncommitted,
+			Ahead:          r.Ahead,
+			Behind:         r.Behind,
+			NeedsAttention: r.NeedsAttention(),
+		}
+		if !r.FetchedAt.IsZero() {
+			j.FetchedAt = nullable(r.FetchedAt.UTC().Format(time.RFC3339))
+		}
+		report.Repos = append(report.Repos, j)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(report)
+}
+
+// nullable returns nil for an empty s, so it encodes as JSON null.
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // note names the states of r that the number columns don't show.

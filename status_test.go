@@ -1,7 +1,12 @@
 package main_test
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/crankshift/githerd/internal/gitfixture"
 )
@@ -161,4 +166,67 @@ func TestStatusScansThreeLevelsBelowTheRootUnlessDepthIsSet(t *testing.T) {
 			"scripts                    main    0            0      0       origin/main\n"+
 			"0 of 3 repos need attention\n")
 	})
+}
+
+func TestStatusJSONCarriesTheSameStateAsTheTable(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "switch", "--quiet", "--create", "feature/login")
+	f.Git(api, "push", "--quiet", "--set-upstream", "origin", "feature/login")
+	f.Commit(api, "session.go", "package api\n", "Add session refresh endpoint")
+	f.Commit(api, "login.go", "package api\n", "Validate login payload")
+	f.Write(api, "login_test.go", "package api\n")
+	f.Git(api, "fetch", "--quiet")
+	fetchedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(api, ".git", "FETCH_HEAD"), fetchedAt, fetchedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	lint := f.Clone(f.Remote("lint-rules"), "work/repos/tools/lint-rules")
+	f.Git(lint, "switch", "--quiet", "--detach", "HEAD")
+	pinned := f.Git(lint, "rev-parse", "--short", "HEAD")
+
+	experiments := f.Init("work/sandbox/experiments")
+	f.Commit(experiments, "notes.md", "ideas\n", "Start notes")
+
+	got := githerd(t, f.Env(), f.Path("."), "status", "--json", f.Path("work"))
+
+	assertJSON(t, got, `{"root": `+jsonString(t, f.Path("work"))+`, "repos": [
+		{"path": "repos/acme/api", "branch": "feature/login", "detached": null,
+		 "upstream": "origin/feature/login", "uncommitted": 1, "ahead": 2, "behind": 0,
+		 "needsAttention": true, "stale": null, "fetchedAt": "2026-03-04T05:06:07Z"},
+		{"path": "repos/tools/lint-rules", "branch": null, "detached": "`+pinned+`",
+		 "upstream": null, "uncommitted": 0, "ahead": 0, "behind": 0,
+		 "needsAttention": false, "stale": null, "fetchedAt": null},
+		{"path": "sandbox/experiments", "branch": "main", "detached": null,
+		 "upstream": null, "uncommitted": 0, "ahead": 1, "behind": 0,
+		 "needsAttention": true, "stale": null, "fetchedAt": null}
+	]}`)
+}
+
+// assertJSON fails unless the run exited 0 and printed JSON equal to want.
+func assertJSON(t *testing.T, got result, want string) {
+	t.Helper()
+	if got.code != 0 {
+		t.Fatalf("exit code %d, stderr:\n%s", got.code, got.stderr)
+	}
+	var gotValue, wantValue any
+	if err := json.Unmarshal([]byte(got.stdout), &gotValue); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, got.stdout)
+	}
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("want is not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Errorf("JSON mismatch\n--- got ---\n%s\n--- want ---\n%s", got.stdout, want)
+	}
+}
+
+func jsonString(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

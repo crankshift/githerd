@@ -5,10 +5,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Repo is the state of one repo.
@@ -21,8 +26,9 @@ type Repo struct {
 	// Ahead is the number of commits the current branch has that its
 	// upstream lacks. With no upstream, it counts the commits that are on no
 	// remote branch.
-	Ahead  int
-	Behind int // commits the upstream has that the current branch lacks, as of the last fetch
+	Ahead     int
+	Behind    int       // commits the upstream has that the current branch lacks, as of the last fetch
+	FetchedAt time.Time // mtime of FETCH_HEAD; zero when the repo was never fetched
 }
 
 // NoUpstream reports whether the current branch has no upstream branch. A
@@ -89,7 +95,32 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 			}
 		}
 	}
+
+	if r.FetchedAt, err = fetchedAt(ctx, dir); err != nil {
+		return Repo{}, err
+	}
 	return r, nil
+}
+
+// fetchedAt returns the mtime of the repo's FETCH_HEAD, or the zero time
+// when it has none.
+func fetchedAt(ctx context.Context, dir string) (time.Time, error) {
+	out, err := git(ctx, dir, "rev-parse", "--git-path", "FETCH_HEAD")
+	if err != nil {
+		return time.Time{}, err
+	}
+	path := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 // count runs a git command that prints one number.
