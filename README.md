@@ -118,12 +118,12 @@ Write one path per line. Each path is absolute or starts with `~`. Blank lines a
 ```text
 # githerd roots
 ~/work
-~/src/oss
+~/src/oss depth=5
 ```
 
 githerd reads the file again on every refresh, so there is nothing to restart. With no roots it reports nothing, and the rail shows where the file goes.
 
-githerd scans 3 directory levels below each root. It skips hidden directories and `node_modules`, and descends into repos to find nested ones. A repo deeper than that needs a root line of its own.
+githerd scans 3 directory levels below each root. It skips hidden directories and `node_modules`, and descends into repos to find nested ones. To scan a root deeper or shallower, put `depth=N` after its path, as for `~/src/oss` above: N levels below the root, or `0` for the root alone. The sidebar tokens and the rail both use it.
 
 ### 2. Add the tokens to the sidebar
 

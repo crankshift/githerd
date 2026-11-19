@@ -109,7 +109,7 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
   ```
 
 - **Herdr adapter.** It runs as `githerd herdr sync`, from the startup hook, the event hooks and the rail.
-  - It reads the roots file in the plugin config dir: one path per line, `~` expanded, blank lines and `#` comments ignored. With no roots it reports nothing.
+  - It reads the roots file in the plugin config dir: one path per line, `~` expanded, blank lines and `#` comments ignored. A line may end in `depth=N`, the scan depth below that root (default 3), as in `~/work depth=5`; the sync and the rail both scan that deep. With no roots it reports nothing.
   - It maps workspaces through `herdr api snapshot`, using the cwd of the first pane listed for each workspace's first tab. The snapshot has no layout tree, so this stands in for Herdr's root pane; the two differ only when the user has moved panes in that tab.
     - a cwd inside a root but inside no nested repo makes a root workspace;
     - a cwd inside a nested repo makes a mapped workspace, mapped to the deepest repo;

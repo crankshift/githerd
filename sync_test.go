@@ -86,6 +86,39 @@ func TestSyncReadsTheRootsFile(t *testing.T) {
 	})
 }
 
+// A root's line in the roots file can say how many directory levels below
+// the root to scan, as `githerd status --depth` does: `~/work depth=5`.
+// Without it, sync scans 3. A line whose depth is not a whole number is
+// named on stderr and left out.
+func TestSyncScansARootAsDeepAsItsLineSays(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Commit(api, ".gitignore", "vendor/\n", "Ignore vendored repos")
+	f.Git(api, "push", "--quiet")
+	sdk := f.Clone(f.Remote("sdk"), "work/repos/acme/api/vendor/sdk") // 5 levels below the root
+	f.Write(sdk, "patch.go", "package sdk\n")
+	f.Clone(f.Remote("site"), "projects/site")
+	h := newFakeHerdr(t, f)
+	h.snapshot(at("root", f.Path("work")), at("sdk", sdk))
+
+	h.roots(f.Path("work") + "\n")
+	h.assertSynced(h.sync(), map[string]tokens{
+		"root": {"repos": "✓1", "changes": cleared, "stale": cleared},
+		"sdk":  {"changes": cleared, "repos": cleared, "stale": cleared}, // in api
+	})
+
+	h.roots(f.Path("work") + " depth=5\n" + f.Path("projects") + " depth=x\n")
+	got := h.sync()
+	if bad := `roots:2: ` + f.Path("projects") + ` depth=x: depth "x" is not a whole number`; got.code != 1 || !strings.Contains(got.stderr, bad) {
+		t.Errorf("want exit 1 and %q on stderr; got %+v", bad, got)
+	}
+	assertTokens(t, tokensByWorkspace(t, h.calls()), map[string]tokens{
+		"root": {"repos": "1/2", "changes": cleared, "stale": cleared},
+		"sdk":  {"changes": "●1", "repos": cleared, "stale": cleared},
+	})
+}
+
 // Hooks run in the plugin root, which moves on every update, so a relative
 // root would mean nothing: it is named on stderr and the others still sync.
 func TestSyncRejectsARelativeRoot(t *testing.T) {

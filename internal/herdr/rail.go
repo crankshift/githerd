@@ -3,7 +3,6 @@ package herdr
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 )
 
 // The plugin and pane that run the rail, as the manifest declares them.
@@ -70,9 +69,6 @@ func MarkRail(ctx context.Context, env Env, pane string) error {
 	_, err := cli{bin: env.Bin}.run(ctx, "pane", "report-metadata", pane, "--source", source, "--token", railToken+"="+railValue)
 	return err
 }
-
-// RootsFile returns the path of the roots file in the plugin config dir.
-func RootsFile(configDir string) string { return filepath.Join(configDir, rootsFile) }
 
 // OpenedFrom returns the cwd of the pane a plugin pane was opened from, read
 // from HERDR_PLUGIN_CONTEXT_JSON: for a split, the pane it split, as it was

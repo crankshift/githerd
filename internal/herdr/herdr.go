@@ -74,6 +74,7 @@ type Root struct {
 	// they are spelled. The repos are found under it, so their dirs have
 	// symlinks resolved too: discovery follows none below the root.
 	Dir   string
+	Depth int           // how many directory levels below the root its repos are found
 	Repos []status.Repo // in path order, the root first when it is a repo; Stale is set
 }
 
@@ -322,16 +323,15 @@ func fetchDue(ctx context.Context, roots []Root, dirs, force []string) []error {
 // repos, and what went wrong. Roots that nest share their repos, which are
 // read once and listed once in dirs.
 func scanRoots(ctx context.Context, configDir string) ([]Root, []string, []error) {
-	paths, errs := readRoots(RootsFile(configDir))
-	roots := make([]Root, len(paths))
-	found := make([][]string, len(paths)) // repo dirs of each root
+	roots, errs := readRoots(RootsFile(configDir))
+	found := make([][]string, len(roots)) // repo dirs of each root
 	var dirs []string                     // repo dirs of every root, once each
 	seen := map[string]bool{}
-	for i, path := range paths {
-		roots[i] = Root{Path: path, Dir: canonical(path)}
+	for i := range roots {
+		roots[i].Dir = canonical(roots[i].Path)
 		var err error
-		if found[i], err = discovery.Repos(roots[i].Dir, discovery.DefaultDepth); err != nil {
-			errs = append(errs, fmt.Errorf("root %s: %w", path, err))
+		if found[i], err = discovery.Repos(roots[i].Dir, roots[i].Depth); err != nil {
+			errs = append(errs, fmt.Errorf("root %s: %w", roots[i].Path, err))
 		}
 		for _, dir := range found[i] {
 			if !seen[dir] {
