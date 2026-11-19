@@ -203,14 +203,19 @@ func TestOWaitsForTheFirstSyncToKnowTheWorkspaces(t *testing.T) {
 	assertCmds(t, "o after the first sync", cmds, tui.CreateWorkspace{Dir: "/work/repos/acme/billing", Label: "billing"})
 }
 
-// s opens a shell in the selected repo, in a split of the rail's own pane.
+// fromPane is the pane the rail was opened from in these tests.
+const fromPane = "w1:p1"
+
+// s opens a shell in the selected repo beside the rail: it splits the pane
+// the rail was opened from, which is wide, and the rail's own pane only when
+// that one is gone or unknown.
 func TestSOpensAShellInTheRepoBesideTheRail(t *testing.T) {
-	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane}, session())
+	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, From: fromPane}, session())
 
 	_, cmds := press(m, "s")
-	assertCmds(t, "s on api", cmds, tui.Split{Pane: railPane, Dir: "/work/repos/acme/api"})
+	assertCmds(t, "s on api", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api"})
 	_, cmds = press(m, "j", "s")
-	assertCmds(t, "s on billing", cmds, tui.Split{Pane: railPane, Dir: "/work/repos/acme/billing"})
+	assertCmds(t, "s on billing", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/billing"})
 }
 
 // noteLine returns the line above the rail's keys at 50×18, without the
@@ -223,9 +228,9 @@ func noteLine(m tui.Model) string {
 // when lazygit is on PATH. Without it, L opens nothing, and the line above
 // the keys says why until the next key.
 func TestLOpensLazygitInTheRepoWhenItIsOnPath(t *testing.T) {
-	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, Lazygit: true}, session())
+	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, From: fromPane, Lazygit: true}, session())
 	_, cmds := press(m, "L")
-	assertCmds(t, "L with lazygit", cmds, tui.Split{Pane: railPane, Dir: "/work/repos/acme/api", Run: "lazygit"})
+	assertCmds(t, "L with lazygit", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api", Run: "lazygit"})
 
 	m = synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane}, session())
 	m, cmds = press(m, "L")

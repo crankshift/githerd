@@ -58,8 +58,8 @@ type rail struct {
 }
 
 // run runs the rail until the model asks to quit or ctx ends. pane is the
-// rail's own pane; cwd is the cwd of the pane it was opened from.
-func (r *rail) run(ctx context.Context, pane, cwd string) {
+// rail's own pane; from is the pane it was opened from.
+func (r *rail) run(ctx context.Context, pane string, from herdr.Origin) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer r.wait()
 	defer cancel()
@@ -82,9 +82,10 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	_, lazygitErr := exec.LookPath("lazygit")
 	m, cmds := tui.New(tui.Options{
 		Now:       time.Now(),
-		Cwd:       cwd,
+		Cwd:       from.Cwd,
 		RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir)),
 		Pane:      pane,
+		From:      from.Pane,
 		Lazygit:   lazygitErr == nil,
 	})
 	m, _ = tui.Update(m, tui.Resize{Width: w, Height: h})
@@ -105,7 +106,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 					return msg
 				})
 			case tui.Split:
-				r.inTurn(ctx, func() tui.Msg { return failed(herdr.OpenShell(ctx, r.env, c.Pane, c.Dir, c.Run)) })
+				r.inTurn(ctx, func() tui.Msg { return failed(herdr.OpenShell(ctx, r.env, c.From, c.Rail, c.Dir, c.Run)) })
 			case tui.Load:
 				first := problems
 				problems = nil

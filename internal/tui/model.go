@@ -105,11 +105,13 @@ type FocusWorkspace struct{ ID string }
 // and focus it: `herdr workspace create --cwd Dir --label Label --focus`.
 type CreateWorkspace struct{ Dir, Label string }
 
-// Split asks Herdr to split Pane, the rail's own, with a shell in Dir below
-// it, and focus the shell: `herdr pane split --pane Pane --direction down
-// --cwd Dir --focus`. With Run set, Run is then typed into the shell:
-// `herdr pane run <new pane> Run`.
-type Split struct{ Pane, Dir, Run string }
+// Split asks Herdr to open a shell in Dir beside the rail and focus it: in
+// a split to the right of From, the pane the rail was opened from, which
+// has the width the rail lacks, `herdr pane split --pane From --direction
+// right --cwd Dir --focus`; or, when From is gone or unknown, below Rail,
+// the rail's own pane, `--pane Rail --direction down`. With Run set, Run is
+// then typed into the shell: `herdr pane run <new pane> Run`.
+type Split struct{ From, Rail, Dir, Run string }
 
 // Zoom asks Herdr to zoom Pane, the rail's own pane, in or out, or to
 // toggle it: `herdr pane zoom --pane <Pane> --on|--off|--toggle`. It always
@@ -151,7 +153,10 @@ type Options struct {
 	RootsFile string // where the roots file is, as the no-roots guidance shows it
 	// Pane is the rail's own pane, from HERDR_PANE_ID, which the requests
 	// to Herdr name. Without it, the rail asks Herdr for no zoom.
-	Pane    string
+	Pane string
+	// From is the pane the rail was opened from, which s and L split; empty
+	// when the rail doesn't know it.
+	From    string
 	Lazygit bool // lazygit is on PATH
 }
 

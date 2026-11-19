@@ -17,13 +17,13 @@ func act(m Model, k Key) (Model, []Cmd) {
 	case "o":
 		return m.open(repo.Dir)
 	case "s":
-		return m, []Cmd{Split{Pane: m.opts.Pane, Dir: repo.Dir}}
+		return m, []Cmd{Split{From: m.opts.From, Rail: m.opts.Pane, Dir: repo.Dir}}
 	case "L":
 		if !m.opts.Lazygit {
 			m.note = "lazygit is not on PATH"
 			return m, nil
 		}
-		return m, []Cmd{Split{Pane: m.opts.Pane, Dir: repo.Dir, Run: "lazygit"}}
+		return m, []Cmd{Split{From: m.opts.From, Rail: m.opts.Pane, Dir: repo.Dir, Run: "lazygit"}}
 	}
 	return m, nil
 }

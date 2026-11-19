@@ -18,12 +18,25 @@ func CreateWorkspace(ctx context.Context, env Env, dir, label string) (string, e
 	return idIn("herdr workspace create", out, "workspace", "workspace_id")
 }
 
-// OpenShell splits pane with a shell in dir below it and focuses the shell.
-// With command set, it then runs command in the shell. The pane is always
-// named: without --pane, Herdr would split whichever pane has focus.
-func OpenShell(ctx context.Context, env Env, pane, dir, command string) error {
+// OpenShell opens a shell in dir beside the rail and focuses it: in a split
+// to the right of beside, the pane the rail was opened from, which has the
+// width the rail lacks, or below rail, the rail's own pane, when beside is
+// gone or unknown. With command set, it then runs command in the shell.
+// Panes are always named: without --pane, Herdr would split whichever pane
+// has focus.
+func OpenShell(ctx context.Context, env Env, beside, rail, dir, command string) error {
 	herdr := cli{bin: env.Bin}
-	out, err := herdr.run(ctx, "pane", "split", "--pane", pane, "--direction", "down", "--cwd", dir, "--focus")
+	split := func(pane, direction string) ([]byte, error) {
+		return herdr.run(ctx, "pane", "split", "--pane", pane, "--direction", direction, "--cwd", dir, "--focus")
+	}
+	var out []byte
+	var err error
+	if beside != "" {
+		out, err = split(beside, "right")
+	}
+	if beside == "" || errorCode(err) == "pane_not_found" {
+		out, err = split(rail, "down")
+	}
 	if err != nil || command == "" {
 		return err
 	}

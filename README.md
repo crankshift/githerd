@@ -263,8 +263,8 @@ The rail shows the root holding the pane you opened it from, or the first root i
 | `/` | filter: type letters that appear in that order in the repo's path, in any case; `enter` keeps the filter, `esc` clears it |
 | `esc` | clear the filter |
 | `o` | focus the workspace mapped to the repo, or create one there when none is |
-| `s` | open a shell in the repo, below the rail |
-| `L` | open lazygit in the repo, below the rail, when lazygit is on the `PATH` |
+| `s` | open a shell in the repo beside the rail: in a split to the right of the pane you opened the rail from, or below the rail when that pane is gone |
+| `L` | open lazygit in the repo, where `s` opens a shell, when lazygit is on the `PATH` |
 | `f` | fetch every repo of the root now, whatever the TTL |
 | `z` | zoom the rail's pane, or unzoom it |
 | `q`, `ctrl+c` | quit |

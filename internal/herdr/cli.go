@@ -58,8 +58,29 @@ func (c cli) report(ctx context.Context, id string, seq uint64, toks map[string]
 	return err
 }
 
-// run runs herdr with args and returns its stdout. Its error carries the
-// message herdr printed: an error response as JSON, or plain usage text.
+// callError is a herdr call that failed: what herdr said, and the code of
+// its error response, when it printed one.
+type callError struct {
+	call string // such as "herdr pane split"
+	code string // such as "pane_not_found"; empty without an error response
+	msg  string
+}
+
+func (e *callError) Error() string { return e.call + ": " + e.msg }
+
+// errorCode returns the code of the error response a failed herdr call
+// printed, or "" when err is not one.
+func errorCode(err error) string {
+	var ce *callError
+	if errors.As(err, &ce) {
+		return ce.code
+	}
+	return ""
+}
+
+// run runs herdr with args and returns its stdout. Its error, a
+// *callError, carries what herdr printed: an error response as JSON, or
+// plain usage text.
 func (c cli) run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
@@ -70,9 +91,10 @@ func (c cli) run(ctx context.Context, args ...string) ([]byte, error) {
 	if err == nil {
 		return out, nil
 	}
-	name := "herdr " + strings.Join(args[:min(2, len(args))], " ")
+	ce := &callError{call: "herdr " + strings.Join(args[:min(2, len(args))], " ")}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return nil, fmt.Errorf("%s: timed out after %v", name, callTimeout)
+		ce.msg = fmt.Sprintf("timed out after %v", callTimeout)
+		return nil, ce
 	}
 	var resp struct {
 		Error struct {
@@ -80,14 +102,14 @@ func (c cli) run(ctx context.Context, args ...string) ([]byte, error) {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	msg := strings.TrimSpace(stderr.String())
-	if json.Unmarshal([]byte(msg), &resp) == nil && resp.Error.Message != "" {
-		msg = resp.Error.Message
+	ce.msg = strings.TrimSpace(stderr.String())
+	if json.Unmarshal([]byte(ce.msg), &resp) == nil && resp.Error.Message != "" {
+		ce.code, ce.msg = resp.Error.Code, resp.Error.Message
 	}
-	if msg == "" {
-		msg = err.Error()
+	if ce.msg == "" {
+		ce.msg = err.Error()
 	}
-	return nil, fmt.Errorf("%s: %s", name, msg)
+	return nil, ce
 }
 
 // idIn returns the id that the JSON result of a herdr call holds at path,

@@ -29,7 +29,7 @@ const (
 	fakeSnapshotFile = "snapshot.json" // the snapshot `api snapshot` serves; without it, herdr is not running
 	fakeCallsFile    = "calls.jsonl"   // one JSON array of argv per call
 	fakeHoldFile     = "hold"          // while it exists, `api snapshot` waits
-	fakeClosedFile   = "closed"        // ids of workspaces closed since the snapshot, one per line
+	fakeClosedFile   = "closed"        // ids of workspaces and panes closed since the snapshot, one per line
 	fakeShellsFile   = "shells"        // ids of panes that came back as plain shells after a restart, one per line
 )
 
@@ -56,7 +56,8 @@ func flag(args []string, name string) string {
 	return ""
 }
 
-// isClosed reports whether workspace id was closed since the snapshot.
+// isClosed reports whether the workspace or pane id was closed since the
+// snapshot.
 func isClosed(dir, id string) bool {
 	closed, _ := os.ReadFile(filepath.Join(dir, fakeClosedFile))
 	for _, c := range strings.Fields(string(closed)) {
@@ -126,6 +127,10 @@ func runFakeHerdr(dir string, args []string) int {
 		return 0
 	case len(args) > 2 && args[0] == "pane" && args[1] == "split":
 		target := flag(args, "--pane")
+		if isClosed(dir, target) {
+			fmt.Fprintf(os.Stderr, `{"id":"cli:pane:split","error":{"code":"pane_not_found","message":"pane %s not found"}}`+"\n", target)
+			return 1
+		}
 		ws, _, _ := strings.Cut(target, ":")
 		fmt.Printf(`{"id":"cli:pane:split","result":{"type":"pane_info","pane":{"pane_id":%q,"terminal_id":"term-%s","workspace_id":%q,`+
 			`"tab_id":"%s:t1","focused":true,"cwd":%q,"agent_status":"unknown","revision":1}}}`+"\n",

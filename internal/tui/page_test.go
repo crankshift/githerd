@@ -469,7 +469,7 @@ func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
 	billing := "/work/repos/acme/billing"
 
 	_, cmds := press(m, "s")
-	assertCmds(t, "s", cmds, tui.Split{Pane: railPane, Dir: billing})
+	assertCmds(t, "s", cmds, tui.Split{Rail: railPane, Dir: billing})
 	_, cmds = press(m, "o")
 	assertCmds(t, "o", cmds, tui.CreateWorkspace{Dir: billing, Label: "billing"})
 	l, cmds := press(m, "L")
@@ -483,5 +483,5 @@ func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
 	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(30 * time.Second)})
 	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{gone}, Refresh: true, Workspaces: session(), WorkspacesRead: true})
 	_, cmds = press(m, "s")
-	assertCmds(t, "s once billing is no longer listed", cmds, tui.Split{Pane: railPane, Dir: billing})
+	assertCmds(t, "s once billing is no longer listed", cmds, tui.Split{Rail: railPane, Dir: billing})
 }

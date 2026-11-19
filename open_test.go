@@ -94,10 +94,10 @@ func TestRailOpensTheSelectedRepoInHerdr(t *testing.T) {
 	term.waitFor(pos, "⧉billing")
 
 	term.typed("s")
-	split := []string{"pane", "split", "--pane", "w1:p9", "--direction", "down", "--cwd", billing, "--focus"}
+	split := []string{"pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", billing, "--focus"}
 	h.expectCalls("s on billing", split)
 	term.typed("L")
-	h.expectCalls("L on billing", split, []string{"pane", "run", fakeSplitPane("w1:p9"), "lazygit"})
+	h.expectCalls("L on billing", split, []string{"pane", "run", fakeSplitPane("w1:p1"), "lazygit"})
 
 	// o waits while Herdr creates the workspace, so press it until it acts.
 	for deadline := time.Now().Add(10 * time.Second); len(h.peekCalls()) == 0; time.Sleep(100 * time.Millisecond) {
@@ -111,6 +111,37 @@ func TestRailOpensTheSelectedRepoInHerdr(t *testing.T) {
 		slices.ContainsFunc(calls, func(c []string) bool { return !slices.Equal(c, focus) }) {
 		t.Errorf("o on billing again: herdr calls %q, want only %q", calls, focus)
 	}
+
+	term.typed("q")
+	if err := <-exited; err != nil {
+		t.Fatalf("the rail exited with %v", err)
+	}
+}
+
+// s opens the shell in a split to the right of the pane the rail was opened
+// from, so it gets half of that pane rather than of the narrow rail. When
+// that pane is gone, s splits the rail downwards instead.
+func TestRailOpensTheShellBesideThePaneItWasOpenedFrom(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	work := f.EveryState()
+	api := filepath.Join(work, gitfixture.UncommittedRepo)
+	h := newFakeHerdr(t, f)
+	h.roots(work + "\n")
+	h.snapshot(at("w1", work), at("w2", api))
+	term := newPTY(t, 60, 20)
+
+	exited := h.startRail(term, api)
+	term.waitFor(0, "⧉ws-w2")
+	h.calls()
+
+	term.typed("s")
+	beside := []string{"pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", resolved(t, api), "--focus"}
+	h.expectCalls("s", beside)
+	writeFile(t, filepath.Join(h.dir, fakeClosedFile), "w1:p1\n")
+	term.typed("s")
+	h.expectCalls("s with that pane closed", beside,
+		[]string{"pane", "split", "--pane", "w1:p9", "--direction", "down", "--cwd", resolved(t, api), "--focus"})
 
 	term.typed("q")
 	if err := <-exited; err != nil {

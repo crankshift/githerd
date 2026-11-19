@@ -1,9 +1,6 @@
 package herdr
 
-import (
-	"context"
-	"encoding/json"
-)
+import "context"
 
 // The plugin and pane that run the rail, as the manifest declares them.
 const (
@@ -68,22 +65,4 @@ func OpenRail(ctx context.Context, env Env) error {
 func MarkRail(ctx context.Context, env Env, pane string) error {
 	_, err := cli{bin: env.Bin}.run(ctx, "pane", "report-metadata", pane, "--source", source, "--token", railToken+"="+railValue)
 	return err
-}
-
-// OpenedFrom returns the cwd of the pane a plugin pane was opened from, read
-// from HERDR_PLUGIN_CONTEXT_JSON: for a split, the pane it split, as it was
-// at open time. It has symlinks resolved, as a Root's Dir has. It returns ""
-// when the context doesn't say.
-func OpenedFrom(contextJSON string) string {
-	var c struct {
-		FocusedPaneCwd string `json:"focused_pane_cwd"`
-		WorkspaceCwd   string `json:"workspace_cwd"`
-	}
-	if json.Unmarshal([]byte(contextJSON), &c) != nil {
-		return ""
-	}
-	if c.FocusedPaneCwd != "" {
-		return canonical(c.FocusedPaneCwd)
-	}
-	return canonical(c.WorkspaceCwd)
 }
