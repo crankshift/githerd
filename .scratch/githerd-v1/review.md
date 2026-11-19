@@ -19,10 +19,10 @@ Judgement calls (smells). Fix the ones where the copies behave differently; fix 
 - [ ] S6. Duplicated git status parsing: the status and repo page packages have identical `git` helpers, and both parse the porcelain v2 `branch.*` headers, the `+N -M` counts and the no-upstream `rev-list` fallback. The repo page should reuse Status.
 - [ ] S7. Worker pool written twice (fetch, status read-all); attention/stale tally counted three times (status table, root tokens, TUI counts); stale map from fetch outcomes built three times; `OpenRail` parses the snapshot itself instead of the shared snapshot reader; the "no … id in %s" unmarshal shape appears three times; rail and page key handlers duplicate the `z/f/o/s/L/q` cases.
 - [ ] S8. Repeated switches: entry kind in rows and detail lines; Remote/Gone/no-upstream in tracking and detail lines; the "exactly one field set" item switched again in Show.
-- [ ] S9. Names: `fetch.one` vs `fetchOne`; `detail.d`; `gitLines(…, differ bool)` (means "exit 1 is OK"); `hr`.
-- [ ] S10. Primitive obsession: the adapter's `Zoom(mode string)` while the TUI has a zoom-mode type. Give the adapter a typed mode (the adapter must not import the TUI).
+- [x] S9. Names: `fetch.one` vs `fetchOne`; `detail.d`; `gitLines(…, differ bool)` (means "exit 1 is OK"); `hr`.
+- [x] S10. Primitive obsession: the adapter's `Zoom(mode string)` while the TUI has a zoom-mode type. Give the adapter a typed mode (the adapter must not import the TUI).
 - [ ] S11. Divergent change: `internal/herdr/rail.go` also holds the roots file and the opened-from context; split them out. The TUI page file (≈700 lines) mixes messages, state, keys and rendering; split by concern.
-- [ ] S12. Exported but package-local: `herdr.Source`, `status.FetchedAt`. Unexport.
+- [x] S12. Exported but package-local: `herdr.Source`, `status.FetchedAt`. Unexport.
 
 ## Spec
 

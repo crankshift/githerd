@@ -130,7 +130,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 					return tui.DetailLoaded{Dir: c.Dir, Item: c.Item, Detail: d, Err: errText(err)}
 				})
 			case tui.Zoom:
-				r.inTurn(ctx, func() tui.Msg { return failed(herdr.Zoom(ctx, r.env, c.Pane, string(c.Mode))) })
+				r.inTurn(ctx, func() tui.Msg { return failed(herdr.Zoom(ctx, r.env, c.Pane, zoomModes[c.Mode])) })
 			}
 		}
 		r.term.Draw(tui.View(m, w, h).ANSI())
@@ -147,6 +147,9 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 		}
 	}
 }
+
+// zoomModes are the Herdr zoom modes of the model's.
+var zoomModes = map[tui.ZoomMode]herdr.ZoomMode{tui.ZoomOn: herdr.ZoomOn, tui.ZoomOff: herdr.ZoomOff, tui.ZoomToggle: herdr.ZoomToggle}
 
 // failed returns the answer to a request that err tells failed, or nil
 // when the request did not fail.
