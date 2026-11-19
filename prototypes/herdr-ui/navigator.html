@@ -1,0 +1,1373 @@
+<!doctype html>
+<!--
+  PROTOTYPE · throwaway · do not ship.
+  Round 2. Round 1 (index.html) picked D, the docked rail. Round 2 picked D3; the page now reflects
+  every decision from the grilling (see docs/adr and .scratch/githerd-v1/prototype.md on main).
+  Question: how should the rail open a repo so you can browse git (changes, diffs, branches, commits),
+  and how does it stay in sync with Herdr workspaces?
+  Plan: three variants of the repo navigator, switchable via ?variant=D1|D2|D3, all inside one mocked Herdr session
+  with several workspaces. Read-only git: changing things goes through a shell or lazygit.
+  Herdr chrome is an approximation; all data is fake.
+  Run: open prototypes/herdr-ui/navigator.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · githerd navigator</title>
+<style>
+  :root {
+    --bg: #0e1014; --panel: #151922; --line: #272c37; --fg: #c8ced8; --dim: #6c7480; --mute: #454b57;
+    --yellow: #e5b567; --cyan: #7cc5d9; --mag: #c79bf0; --red: #f07178; --green: #9ccc7a; --blue: #82aaff;
+    --sel: #243049; --sel2: #1c2333; --selfg: #e8edf5; --addbg: #15271a; --delbg: #2d1719;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #2b2e34; }
+  body { font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
+
+  #switcher { position: fixed; top: 10px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 2px;
+    background: #111; color: #fff; border: 2px solid #ffd23f; border-radius: 999px; padding: 3px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45); font: 600 13px/1 ui-sans-serif, -apple-system, sans-serif; user-select: none; }
+  #switcher button { background: none; border: 0; color: #ffd23f; font: inherit; font-size: 15px; padding: 6px 10px; cursor: pointer; border-radius: 999px; }
+  #switcher button:hover { background: #2a2a2a; }
+  #switcher .label { padding: 0 8px; min-width: 230px; text-align: center; }
+  #switcher .label small { color: #aaa; font-weight: 400; margin-left: 6px; }
+  #toggleInspector { position: fixed; top: 12px; right: 14px; z-index: 100; font: 12px ui-sans-serif, sans-serif; padding: 6px 10px; border-radius: 6px; border: 0; background: #111; color: #ffd23f; cursor: pointer; }
+  #round1 { position: fixed; top: 14px; left: 330px; z-index: 100; font: 12px ui-sans-serif, sans-serif; color: #bbb; }
+  #round1 a { color: #ffd23f; }
+
+  #stage { display: flex; gap: 14px; padding: 54px 14px 14px; height: 100vh; }
+  #term { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.5); background: var(--bg); }
+  .titlebar { height: 28px; flex: none; background: #1c1f26; display: flex; align-items: center; padding: 0 10px; gap: 7px; color: #8a909c; font-size: 12px; }
+  .titlebar i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .titlebar span { margin-left: 10px; }
+  #herdr { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; outline: none; overflow: hidden;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.45; color: var(--fg); }
+  #herdr:not(:focus) .cursor { opacity: .35; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  #sidebar { width: 34ch; flex: none; border-right: 1px solid var(--line); padding: 3px 0; overflow: hidden; }
+  #sidebar .ws { cursor: pointer; }
+  #sidebar .ws:hover { background: #161b25; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+  .tab { padding: 0 1.5ch; color: var(--dim); white-space: pre; }
+  .tab.on { color: var(--selfg); background: var(--sel); }
+  .panes { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); margin: 2px; overflow: hidden; }
+  .pane.focus { border-color: var(--blue); }
+  .ph { padding: 0 1ch; color: var(--dim); border-bottom: 1px solid var(--line); white-space: pre; flex: none; overflow: hidden; }
+  .pane.focus .ph { color: var(--blue); }
+  .pc { flex: 1; padding: 0 1ch; overflow: hidden; }
+  .statusbar { flex: none; background: #181c24; color: var(--dim); white-space: pre; padding: 0 1ch; border-top: 1px solid var(--line); overflow: hidden; }
+  .ln { white-space: pre; height: 1.45em; overflow: hidden; }
+  .sel { background: var(--sel); color: var(--selfg); }
+  .sel2 { background: var(--sel2); }
+  .addl { background: var(--addbg); } .dell { background: var(--delbg); }
+  .flash { animation: flash .9s ease-out; }
+  @keyframes flash { from { background: #5a4a1e; } to { background: transparent; } }
+  .dim { color: var(--dim); } .mute { color: var(--mute); } .b { font-weight: 700; } .it { font-style: italic; }
+  .yellow { color: var(--yellow); } .cyan { color: var(--cyan); } .mag { color: var(--mag); } .red { color: var(--red); }
+  .green { color: var(--green); } .blue { color: var(--blue); } .fg { color: var(--selfg); }
+  .cursor { background: var(--fg); color: var(--bg); }
+  .zoompill { margin-left: auto; color: var(--bg); background: var(--yellow); padding: 0 1ch; }
+
+  #inspector { width: 440px; flex: none; overflow-y: auto; background: #f3f0e8; color: #222; border-radius: 10px; padding: 14px 16px 30px; font-size: 13px; line-height: 1.45; }
+  #inspector.hidden { display: none; }
+  #inspector h2 { font-size: 15px; margin: 0 0 4px; }
+  #inspector h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8a6d1e; margin: 18px 0 6px; }
+  #inspector p { margin: 4px 0; }
+  #inspector ul { margin: 4px 0; padding-left: 18px; }
+  #inspector pre { background: #1d1f24; color: #d8dde6; padding: 8px 10px; border-radius: 6px; overflow-x: auto; font: 11.5px/1.45 "JetBrains Mono", "SF Mono", Menlo, monospace; margin: 4px 0; white-space: pre; }
+  #inspector .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+  #inspector button { font: inherit; font-size: 12px; padding: 4px 9px; border: 1px solid #bbb2a0; background: #fff; border-radius: 6px; cursor: pointer; }
+  #inspector button:hover { background: #fff8e0; }
+  #inspector select { font: inherit; font-size: 12px; padding: 2px 4px; max-width: 100%; }
+  #inspector .note { color: #6b6250; font-size: 12px; }
+  #inspector kbd { font: 11px "JetBrains Mono", Menlo, monospace; background: #fff; border: 1px solid #ccc; border-radius: 3px; padding: 0 4px; }
+  #inspector table { border-collapse: collapse; font: 11.5px "JetBrains Mono", Menlo, monospace; width: 100%; }
+  #inspector td, #inspector th { text-align: left; padding: 2px 4px; border-bottom: 1px solid #ddd5c4; vertical-align: top; }
+  #inspector .warn { color: #b3261e; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="switcher" title="Prototype switcher · ← / → cycle when the githerd pane is not focused">
+  <button id="prev" aria-label="Previous variant">◀</button>
+  <div class="label" id="vlabel"></div>
+  <button id="next" aria-label="Next variant">▶</button>
+</div>
+<div id="round1">round 1: <a href="index.html?variant=D">index.html</a></div>
+<button id="toggleInspector">hide inspector</button>
+
+<div id="stage">
+  <section id="term">
+    <div class="titlebar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>herdr</span></div>
+    <div id="herdr" tabindex="0">
+      <div class="body">
+        <div id="sidebar"></div>
+        <div id="main"></div>
+      </div>
+      <div class="statusbar" id="statusbar"></div>
+    </div>
+  </section>
+
+  <aside id="inspector">
+    <h2 id="iTitle"></h2>
+    <p id="iIdea"></p>
+    <h3 id="iProbesTitle">This variant asks</h3>
+    <ul id="iProbes"></ul>
+
+    <h3>How to drive it</h3>
+    <p class="note">Click the terminal. <kbd>g</kbd> (= <code>prefix g</code>) opens or focuses the githerd pane in the <b>current</b> workspace. Inside it: <kbd>j</kbd>/<kbd>k</kbd> move, <kbd>l</kbd>/<kbd>enter</kbd>/<kbd>→</kbd> drill in, <kbd>h</kbd>/<kbd>esc</kbd>/<kbd>←</kbd> back, <kbd>z</kbd> zoom pane, <kbd>o</kbd> open repo in its workspace, <kbd>s</kbd> shell split, <kbd>L</kbd> lazygit, <kbd>f</kbd> fetch. Outside it: <kbd>o</kbd> next pane, <kbd>w</kbd> next workspace, <kbd>z</kbd> zoom, <kbd>x</kbd> close pane. Click sidebar rows to switch workspace.</p>
+
+    <h3>Do things in Herdr itself (not via githerd)</h3>
+    <div class="row">
+      <select id="newWsDir"></select>
+      <button id="newWs">workspace create</button>
+    </div>
+    <div class="row">
+      <button id="closeWs">close active workspace</button>
+      <select id="cdDir"></select>
+      <button id="cdWs">cd in active workspace</button>
+    </div>
+    <p class="note">Herdr emits <code>workspace.created</code>/<code>.closed</code>/<code>.focused</code> to githerd's hooks. A <code>cd</code> emits nothing hookable (<code>pane.updated</code> can't trigger hooks), so githerd's view lags until the next trigger: watch the map below.</p>
+
+    <h3>githerd config: <code>$HERDR_PLUGIN_CONFIG_DIR/roots</code></h3>
+    <textarea id="rootsCfg" rows="3" style="width:100%;font:12px 'JetBrains Mono',Menlo,monospace"></textarea>
+    <div class="row"><button id="applyRoots">save file</button><span class="note">githerd re-reads it on every run</span></div>
+
+    <h3>Workspace ↔ repo map</h3>
+    <table id="iMap"></table>
+
+    <h3>Scenario</h3>
+    <div class="row">
+      <select id="scenario">
+        <option value="typical">Typical: 14 repos, 7 need attention</option>
+        <option value="clean">All clean</option>
+        <option value="big">Big root: 60 repos</option>
+        <option value="offline">Offline: every fetch fails</option>
+      </select>
+      <button id="age">+10 min</button>
+      <label>TTL <select id="ttl"><option value="5">5m</option><option value="15" selected>15m</option><option value="60">60m</option></select></label>
+    </div>
+
+    <h3>Other refresh triggers</h3>
+    <div class="row">
+      <button data-trigger="agent">pane.agent_status_changed → done</button>
+      <button data-trigger="startup">[[startup]]</button>
+      <button data-trigger="fetch">fetch now</button>
+    </div>
+
+    <h3>Last reports to Herdr</h3>
+    <pre id="iReports"></pre>
+    <h3>Event log</h3>
+    <pre id="iLog" style="max-height:220px"></pre>
+    <h3>Plugin wiring (sketch)</h3>
+    <pre id="iConfig"></pre>
+  </aside>
+</div>
+
+<script>
+'use strict';
+
+/* ================= variants ================= */
+const VARIANTS = {
+  D1: {
+    name: 'Miller columns',
+    idea: 'Drill sideways: repos → sections → items → diff, one column per level, and the column to the right previews whatever is under the cursor. At 50% width two or three columns fit; z zooms the pane and shows four.',
+    probes: [
+      'Is drilling sideways (h / l) natural for git, or does it feel like a file manager?',
+      'Is the live preview column helpful, or noise while you move?',
+      'At 50% width the diff gets ~30 columns. Enough, or should l on a file auto-zoom?',
+    ],
+  },
+  D2: {
+    name: 'List + tabbed detail',
+    idea: 'The repo list never moves. The right side shows the selected repo with tabs: Changes, To push, To pull, Branches, Log. l on an item replaces the tab body with a commit or a diff; a breadcrumb shows where you are.',
+    probes: [
+      'Fixed list + tabs vs drilling: which is easier to keep your bearings in?',
+      'Tab / ] / [ switch tabs: OK, or one key per tab (c p u b L)?',
+      'Below ~60 columns only one side shows at a time. Acceptable?',
+    ],
+  },
+  D3: {
+    name: 'Rail + repo page ✓',
+    idea: 'The rail stays a compact list. Enter zooms the githerd pane to the full tab (herdr pane zoom) and shows one repo page: every section stacked on the left, a live diff of the selected line on the right. Esc goes back to the rail and unzooms.',
+    probes: [
+      'Is auto-zoom on Enter OK, or should zoom stay manual?',
+      'One scrollable page vs separate sections: does the left column get too long in a busy repo?',
+      'J / K scroll the diff while j / k move: comfortable?',
+    ],
+  },
+};
+const COMMON_PROBES = [
+  'Read-only: githerd shows git, while staging, commits and checkout go through a shell (s) or lazygit (L). OK for v1?',
+  'o focuses the workspace that already maps to the repo, and creates one only if none does. Right rule?',
+  'Should "maps to" mean an exact repo-root cwd, or any cwd inside the repo (e.g. ~/work/repos/acme/api/src)?',
+  'Each workspace inside a repo gets a ●N token (uncommitted) next to Herdr\'s built-in branch / git_status. Wanted?',
+];
+const DECIDED = [
+  'Rail in a split; Enter opens the repo page and zooms the pane (herdr pane zoom); Esc goes back and unzooms.',
+  'Read-only: s opens a shell, L opens lazygit, beside the rail, for anything that changes a repo.',
+  'Roots come from $HERDR_PLUGIN_CONFIG_DIR/roots, one path per line. No file → githerd reports nothing.',
+  'A workspace maps to the deepest repo containing its first pane\'s cwd; o focuses that workspace or creates one.',
+  'Root workspace gets $repos (and $stale); a mapped workspace gets $changes. No --ttl-ms; [[startup]] re-reports after a restart.',
+  'Refresh: the rail\'s own 30 s loop while open, plus hooks on workspace.created/closed/focused and agent done/idle.',
+  '/ filters the rail; clean repos sit dim at the bottom.',
+  'Linux and macOS; Go standard library, built with go build at install. Remote machines are out of scope.',
+];
+const KEYS = Object.keys(VARIANTS);
+let variant = new URLSearchParams(location.search).get('variant');
+if (!VARIANTS[variant]) variant = 'D3';
+
+/* ================= text helpers ================= */
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const pad = (s, n) => { s = String(s); if (n <= 0) return ''; return s.length > n ? s.slice(0, Math.max(0, n - 1)) + '…' : s + ' '.repeat(n - s.length); };
+const padL = (s, n) => { s = String(s); return s.length >= n ? s.slice(0, n) : ' '.repeat(n - s.length) + s; };
+const truncL = (s, n) => { s = String(s); if (n <= 1) return s.slice(-Math.max(0, n)); return s.length <= n ? s : '…' + s.slice(s.length - n + 1); };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const segLen = a => a.reduce((n, [t]) => n + String(t).length, 0);
+const segHtml = a => a.map(([t, cls]) => cls ? `<span class="${cls}">${esc(t)}</span>` : esc(t)).join('');
+function fit(a, W) {
+  const out = []; let n = 0;
+  for (const [t0, cls] of a) {
+    if (n >= W) break;
+    let t = String(t0);
+    if (n + t.length > W) t = t.slice(0, Math.max(0, W - n - 1)) + '…';
+    out.push([t, cls]); n += t.length;
+  }
+  if (n < W) out.push([' '.repeat(W - n)]);
+  return out;
+}
+function lr(left, right, W) {
+  const rl = segLen(right);
+  if (rl + 2 > W) return fit(left, W);
+  return [...fit(left, W - rl - 1), [' '], ...right];
+}
+const line = (a, cls = '') => `<div class="ln ${cls}">${segHtml(a)}</div>`;
+const spinner = () => '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[Math.floor(Date.now() / 90) % 10];
+function hash(s) { let h = 2166136261; for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed) { let a = seed; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const pick = (r, a) => a[Math.floor(r() * a.length)];
+const hex = r => Array.from({ length: 7 }, () => '0123456789abcdef'[Math.floor(r() * 16)]).join('');
+const short = p => p === '.' ? (S.view || '~').split('/').pop() : p.split('/').slice(-1)[0];
+const absPath = p => p === '.' ? S.view : S.view + '/' + p;
+const fk = r => r.root + ':' + r.path;
+function fuzzy(q, s) { q = q.toLowerCase(); s = s.toLowerCase(); let i = 0; for (const ch of s) if (ch === q[i]) i++; return i === q.length; }
+const tag = (root, list) => { list.forEach(r => { r.root = root; }); return list; };
+
+/* ================= repos ================= */
+function R(path, branch, upstream, ahead, behind, files, aheadLog, behindLog, fetched, extra = {}) {
+  return { path, branch, upstream, ahead, behind, files, aheadLog, behindLog, fetched, remote: fetched !== null, detached: null, stale: null, ...extra };
+}
+const SEARCH_FILES = ['src/rank.ts', 'src/index.ts', 'src/query.ts', 'src/tokens.ts', 'test/rank.test.ts', 'test/query.test.ts', 'README.md', 'package.json', 'src/synonyms.json', 'src/stopwords.txt', 'bench/run.ts', 'bench/data.csv']
+  .map((f, i) => [i < 9 ? ' M' : '??', f]);
+function typical() {
+  return [
+    R('.', 'main', 'origin/main', 0, 0, [['??', 'TODO.md']], [], [], 4),
+    R('repos/acme/api', 'feature/login', 'origin/feature/login', 2, 0,
+      [[' M', 'src/auth.ts'], ['M ', 'src/routes.ts'], ['??', 'src/auth.test.ts']],
+      [['3f2a9c1', 'Add session refresh endpoint'], ['b81e0d4', 'Validate login payload']], [], 4),
+    R('repos/acme/api/vendor/sdk', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/billing', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/docs', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/infra', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/mobile', 'release/2.3', 'origin/release/2.3', 1, 2, [],
+      [['c0ffee1', 'Hotfix crash on resume']], [['d15ea5e', 'Release notes 2.3.1'], ['5eed5ed', 'Bump build number']], 4),
+    R('repos/acme/search', 'main', 'origin/main', 0, 1, SEARCH_FILES.slice(), [], [['8badf00', 'Tune ranking weights']], 4),
+    R('repos/acme/web', 'main', 'origin/main', 0, 4, [], [],
+      [['9c0d1e2', 'Bump design tokens'], ['77a1f3b', 'Fix footer links'], ['e4b2c90', 'Add pricing page'], ['1a2b3c4', 'Upgrade bundler']], 4),
+    R('repos/oss/fastqueue', 'main', 'upstream/main', 0, 0, [], [], [], 190, { stale: 'Permission denied (publickey)' }),
+    R('repos/oss/kvstore', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/tools/cli', 'spike/parser', null, 3, 0, [],
+      [['aa11bb2', 'WIP tokenizer'], ['cc33dd4', 'Parse flags'], ['ee55ff6', 'Spike: AST printer']], [], 4),
+    R('repos/tools/lint-rules', null, null, 0, 0, [], [], [], 4, { detached: 'v1.4.0' }),
+    R('sandbox/experiments', 'main', null, 0, 0, [[' M', 'notes.md']], [], [], null),
+  ];
+}
+function cleanSet() {
+  return typical().map(r => ({ ...r, files: [], ahead: 0, behind: 0, aheadLog: [], behindLog: [], stale: null,
+    upstream: r.detached ? null : (r.upstream || 'origin/' + r.branch), remote: true, fetched: 4 }));
+}
+function bigSet() {
+  const names = ['auth', 'gateway', 'ledger', 'notify', 'catalog', 'orders', 'pricing', 'reports', 'queue', 'metrics', 'profile', 'media', 'assets', 'checkout', 'sessions', 'webhooks'];
+  const out = typical(); let k = 0;
+  for (const g of ['acme', 'labs', 'oss']) for (const n of names) {
+    if (out.length >= 60) break;
+    const p = `repos/${g}/${n}`;
+    if (out.some(r => r.path === p)) continue;
+    k++;
+    const behind = k % 13 === 0 ? 2 : 0;
+    out.push(R(p, 'main', 'origin/main', 0, behind, k % 9 === 0 ? [[' M', 'src/main.go']] : [], [], behind ? [['f00d' + String(k).padStart(3, '0'), 'Upstream change'], ['beef' + String(k).padStart(3, '0'), 'Upstream fix']] : [], 4));
+  }
+  return out;
+}
+function blogSet() {
+  return [R('.', 'draft/notes', 'origin/draft/notes', 1, 0, [[' M', 'posts/herdr-plugins.md'], ['??', 'drafts/githerd.md']],
+    [['a1c2e3f', 'Draft: notes on Herdr plugins']], [], 4)];
+}
+const SCENARIOS = { typical, clean: cleanSet, big: bigSet, offline: () => typical().map(r => ({ ...r, fetched: r.remote ? 30 : null })) };
+function derive(r) {
+  const unc = r.files.length, noUp = !r.detached && !r.upstream;
+  return { ...r, unc, noUp, att: unc > 0 || r.ahead > 0 || r.behind > 0 || noUp };
+}
+const repo = p => { const r = S.repos.find(x => x.path === p); return r ? derive(r) : null; };
+function summary() { return summaryOf(S.repos); }
+function summaryOf(list) {
+  const rs = list.map(derive), remotes = rs.filter(r => r.remote && !r.stale);
+  return { total: rs.length, att: rs.filter(r => r.att).length, stale: rs.filter(r => r.stale).length,
+    oldest: remotes.length ? Math.max(...remotes.map(r => r.fetched)) : 0 };
+}
+function glyphSegs(r) {
+  const a = [];
+  if (r.unc) a.push(['●' + r.unc, 'yellow']);
+  if (r.noUp) a.push(['∅', 'red']);
+  if (r.ahead) a.push(['⇡' + r.ahead, 'cyan']);
+  if (r.behind) a.push(['⇣' + r.behind, 'mag']);
+  if (r.detached) a.push(['⌀', 'dim']);
+  if (r.stale) a.push(['⚠', 'red']);
+  const out = [];
+  a.forEach((g, i) => { if (i) out.push([' ']); out.push(g); });
+  return out;
+}
+
+/* ================= fake git detail: branches, commits, diffs ================= */
+const SUBJECTS = ['Fix flaky retry test', 'Refactor config loader', 'Add metrics endpoint', 'Update dependencies', 'Improve error messages', 'Handle empty input', 'Tidy imports', 'Document CLI flags', 'Speed up startup', 'Rename internal helper', 'Cache parsed manifests', 'Drop unused feature flag'];
+const AUTHORS = ['kim', 'alex', 'sam', 'ci-bot', 'you'];
+const AGES = ['40m', '2h', '5h', 'yesterday', '2d', '3d', '5d', '1w', '2w', '1mo'];
+let CACHE = {};
+const cacheFor = r => CACHE[fk(r)] || (CACHE[fk(r)] = { commits: {}, branches: null });
+function filePool(r) {
+  const base = r.path.includes('mobile') ? ['app/src/Main.kt', 'app/build.gradle', 'CHANGELOG.md'] :
+    ['src/index.ts', 'src/config.ts', 'src/util.ts', 'README.md', 'package.json'];
+  return [...new Set([...r.files.map(f => f[1]), ...base])];
+}
+function commitOf(r, h, subject, kind) {
+  const c = cacheFor(r).commits;
+  if (c[h]) return c[h];
+  const rr = rng(hash(r.path + h));
+  const pool = filePool(r);
+  const n = 1 + Math.floor(rr() * 3), files = [];
+  while (files.length < Math.min(n, pool.length)) { const f = pick(rr, pool); if (!files.includes(f)) files.push(f); }
+  return (c[h] = { hash: h, subject, author: kind === 'ahead' ? 'you' : pick(rr, AUTHORS.slice(0, 4)), age: kind === 'ahead' ? pick(rr, AGES.slice(0, 3)) : pick(rr, AGES), files, kind });
+}
+function genCommits(r, seed, n, kind = 'old') {
+  const rr = rng(hash(r.path + seed));
+  return Array.from({ length: n }, () => commitOf(r, hex(rr), pick(rr, SUBJECTS), kind));
+}
+function headLog(r) { return [...r.aheadLog.map(([h, s]) => commitOf(r, h, s, 'ahead')), ...genCommits(r, 'log', 7)]; }
+function branchesOf(r) {
+  const cache = cacheFor(r);
+  if (cache.branches) return cache.branches;
+  let out;
+  if (r.path === 'repos/acme/api') {
+    out = [
+      { name: 'feature/login', current: true, upstream: 'origin/feature/login', ahead: r.ahead, behind: r.behind },
+      { name: 'main', upstream: 'origin/main', ahead: 0, behind: 3 },
+      { name: 'fix/token-expiry', upstream: null, ahead: 1, behind: 0 },
+      { name: 'origin/release/1.9', remoteOnly: true },
+    ];
+  } else if (r.detached) {
+    out = [{ name: `(detached at ${r.detached})`, current: true, upstream: null, ahead: 0, behind: 0, detached: true },
+           { name: 'main', upstream: 'origin/main', ahead: 0, behind: 0 }];
+  } else {
+    const rr = rng(hash(r.path + 'branches'));
+    out = [{ name: r.branch, current: true, upstream: r.upstream, ahead: r.ahead, behind: r.behind }];
+    if (r.branch !== 'main') out.push({ name: 'main', upstream: r.remote ? 'origin/main' : null, ahead: 0, behind: r.remote ? 1 + Math.floor(rr() * 3) : 0 });
+    const n = Math.floor(rr() * 3);
+    for (let i = 0; i < n; i++) {
+      const name = pick(rr, ['feature/', 'fix/', 'chore/']) + pick(rr, ['retry', 'cache', 'docs', 'metrics', 'cleanup', 'upgrade']);
+      if (out.some(b => b.name === name)) continue;
+      const pushed = r.remote && rr() < .6;
+      out.push({ name, upstream: pushed ? 'origin/' + name : null, ahead: 1 + Math.floor(rr() * 3), behind: pushed && rr() < .3 ? 1 : 0 });
+    }
+    if (r.remote && rr() < .5) out.push({ name: 'origin/' + pick(rr, ['release/next', 'hotfix/login', 'renovate/deps']), remoteOnly: true });
+  }
+  return (cache.branches = out);
+}
+function branchLog(r, b) { return b.current ? headLog(r) : genCommits(r, 'branch:' + b.name, 5); }
+
+const HAND = {
+  'repos/acme/api:src/auth.ts': `@@ -18,9 +18,21 @@ export function verifyToken(token: string) {
+   const payload = decode(token);
+-  if (payload.exp < now()) throw new AuthError('expired');
++  if (payload.exp < now()) {
++    throw new AuthError('expired', { refreshable: true });
++  }
+   return payload;
+ }
+
++export async function refreshSession(refreshToken: string) {
++  const session = await sessions.find(refreshToken);
++  if (!session || session.revoked) {
++    throw new AuthError('invalid refresh token');
++  }
++  const token = sign({ sub: session.userId, exp: now() + TTL });
++  await sessions.touch(session.id);
++  return { token, expiresIn: TTL };
++}
++
+ export function logout(sessionId: string) {
+   return sessions.revoke(sessionId);
+ }`,
+  'repos/acme/api:src/routes.ts': `@@ -1,6 +1,6 @@
+ import { Router } from './router';
+-import { login, logout } from './auth';
++import { login, logout, refreshSession } from './auth';
+
+ export const routes = new Router();
+
+@@ -21,4 +21,10 @@ routes.post('/login', async (req) => {
+ routes.post('/logout', async (req) => {
+   return logout(req.session.id);
+ });
++
++routes.post('/session/refresh', async (req) => {
++  const { refreshToken } = await req.json();
++  return refreshSession(refreshToken);
++});`,
+  'repos/acme/api:src/auth.test.ts': `@@ -0,0 +1,16 @@
++import { test, expect } from './testing';
++import { refreshSession } from './auth';
++import { fakeSessions } from './fixtures';
++
++test('refresh returns a new token', async () => {
++  const s = fakeSessions.active();
++  const res = await refreshSession(s.refreshToken);
++  expect(res.expiresIn).toBeGreaterThan(0);
++});
++
++test('refresh rejects a revoked session', async () => {
++  const s = fakeSessions.revoked();
++  await expect(refreshSession(s.refreshToken))
++    .rejects.toThrow('invalid refresh token');
++});
++`,
+};
+const POOL = {
+  ts: { fn: 'export function run(input: string) {', ctx: ['  const items = parse(input);', '  const seen = new Set<string>();', '  return items.map(normalize);', '}'], del: ['  const limit = 50;', '  if (!items) return [];', '  console.log(items);'], add: ['  const limit = config.limit ?? 100;', '  if (!items?.length) return [];', '  log.debug("run", { count: items.length });', '  metrics.inc("run.items", items.length);'] },
+  kt: { fn: 'class MainActivity : AppCompatActivity() {', ctx: ['    override fun onResume() {', '        super.onResume()', '    }'], del: ['        restoreState(bundle!!)'], add: ['        bundle?.let { restoreState(it) }', '        analytics.track("resume")'] },
+  gradle: { fn: 'android {', ctx: ['    defaultConfig {', '        minSdk 26'], del: ['        versionCode 230'], add: ['        versionCode 231'] },
+  go: { fn: 'func main() {', ctx: ['\tcfg := loadConfig()', '\tsrv := newServer(cfg)'], del: ['\tsrv.Listen(":8080")'], add: ['\taddr := cfg.Addr()', '\tsrv.Listen(addr)'] },
+  md: { fn: '## Usage', ctx: ['', 'Run the service locally:', ''], del: ['    npm start'], add: ['    make run', '', 'Set `PORT` to change the port.'] },
+  json: { fn: '{', ctx: ['  "name": "service",', '  "private": true,'], del: ['  "version": "1.2.0",'], add: ['  "version": "1.3.0",'] },
+  txt: { fn: '', ctx: ['a', 'an', 'the'], del: ['of'], add: ['of', 'to', 'in'] },
+  csv: { fn: '', ctx: ['query,ms', 'shoes,12'], del: ['boots,31'], add: ['boots,18', 'socks,9'] },
+};
+function genDiff(path, st, seed) {
+  const ext = path.split('.').pop();
+  const P = POOL[ext] || POOL.txt;
+  const r = rng(hash(path + seed));
+  if (st === '??') {
+    const lines = [P.fn, ...P.ctx, ...P.add].filter(l => l !== '').slice(0, 5 + Math.floor(r() * 5));
+    return `@@ -0,0 +1,${lines.length} @@\n` + lines.map(l => '+' + l).join('\n');
+  }
+  const start = 5 + Math.floor(r() * 80);
+  const dels = P.del.slice(0, 1 + Math.floor(r() * P.del.length));
+  const adds = P.add.slice(0, 1 + Math.floor(r() * P.add.length));
+  const a = P.ctx.slice(0, 2), b = P.ctx.slice(2);
+  return `@@ -${start},${a.length + dels.length + b.length} +${start},${a.length + adds.length + b.length} @@ ${P.fn}\n` +
+    [...a.map(l => ' ' + l), ...dels.map(l => '-' + l), ...adds.map(l => '+' + l), ...b.map(l => ' ' + l)].join('\n');
+}
+function parseDiff(text) {
+  const out = []; let o = 0, n = 0;
+  for (const raw of text.split('\n')) {
+    if (raw.startsWith('@@')) { const m = raw.match(/-(\d+)(?:,\d+)? \+(\d+)/); o = +m[1]; n = +m[2]; out.push({ k: '@', t: raw }); continue; }
+    const k = raw[0] || ' ', t = raw.slice(1);
+    if (k === '+') out.push({ k, t, n: n++ });
+    else if (k === '-') out.push({ k, t, o: o++ });
+    else out.push({ k: ' ', t, o: o++, n: n++ });
+  }
+  return out;
+}
+const diffOf = (r, file, st, seed = '') => parseDiff(HAND[r.path + ':' + file] && !seed ? HAND[r.path + ':' + file] : genDiff(file, st, seed));
+
+/* ================= navigation model (shared by variants) ================= */
+function sections(r) {
+  return [
+    { key: 'changes', label: 'Changes', n: r.unc, cls: 'yellow', node: { type: 'files', repo: r.path } },
+    { key: 'push', label: r.noUp ? 'Local commits' : 'To push', n: r.ahead, cls: 'cyan', node: { type: 'commits', repo: r.path, which: 'ahead' } },
+    { key: 'pull', label: 'To pull', n: r.behind, cls: 'mag', node: { type: 'commits', repo: r.path, which: 'behind' } },
+    { key: 'branches', label: 'Branches', n: branchesOf(r).length, cls: 'blue', node: { type: 'branches', repo: r.path } },
+    { key: 'log', label: 'Log', n: null, cls: 'dim', node: { type: 'commits', repo: r.path, which: 'log' } },
+  ];
+}
+function commitsFor(node) {
+  const r = repo(node.repo);
+  if (node.which === 'ahead') return r.aheadLog.map(([h, s]) => commitOf(r, h, s, 'ahead'));
+  if (node.which === 'behind') return r.behindLog.map(([h, s]) => commitOf(r, h, s, 'behind'));
+  if (node.which === 'log') return headLog(r);
+  const b = branchesOf(r).find(x => x.name === node.branch);
+  return b ? branchLog(r, b) : [];
+}
+function railRepos() { return S.repos.map(derive).filter(r => !G.filter || fuzzy(G.filter, r.path)).sort((a, b) => (b.att - a.att) || a.path.localeCompare(b.path)); }
+function rowsOf(node) {
+  const r = node.repo ? repo(node.repo) : null;
+  switch (node.type) {
+    case 'repos': return railRepos().map(x => ({ r: x, next: { type: 'repo', repo: x.path } }));
+    case 'repo': return sections(r).map(sec => ({ sec, next: sec.node }));
+    case 'files': return r.files.map(([st, f]) => ({ st, f, next: { type: 'diff', repo: r.path, file: f, st } }));
+    case 'commits': return commitsFor(node).map(c => ({ c, next: { type: 'commit', repo: r.path, hash: c.hash } }));
+    case 'branches': return branchesOf(r).map(b => ({ b, next: { type: 'commits', repo: r.path, which: 'branch', branch: b.name } }));
+    case 'commit': { const c = cacheFor(r).commits[node.hash]; return c.files.map(f => ({ f, next: { type: 'diff', repo: r.path, file: f, st: ' M', hash: c.hash } })); }
+    default: return [];
+  }
+}
+const isDoc = n => n.type === 'diff';
+function titleOf(node) {
+  switch (node.type) {
+    case 'repos': return S.view;
+    case 'repo': return truncL(node.repo, 40);
+    case 'files': return 'Changes';
+    case 'commits': return node.which === 'ahead' ? (repo(node.repo).noUp ? 'Local commits' : 'To push') : node.which === 'behind' ? 'To pull' : node.which === 'log' ? 'Log' : node.branch;
+    case 'branches': return 'Branches';
+    case 'commit': return node.hash;
+    case 'diff': return node.file.split('/').pop();
+  }
+}
+function wsBadge(path) {
+  const names = Object.entries(S.seenMap).filter(([, v]) => v.role === 'repo' && v.root === S.view && v.repo === path).map(([id]) => id);
+  const out = [];
+  names.forEach(id => { const w = S.workspaces.find(x => x.id === id); if (w) out.push([' ⧉' + w.name, id === S.activeWs ? 'blue b' : 'cyan']); });
+  return out;
+}
+function branchLeft(b) { return [[b.current ? '* ' : '  ', 'green'], [b.name, b.current ? 'green b' : b.remoteOnly ? 'dim' : 'fg']]; }
+function branchRight(b) {
+  if (b.remoteOnly) return [['remote', 'dim']];
+  if (b.detached) return [['detached', 'dim']];
+  if (!b.upstream) return [['∅ no upstream', 'red']];
+  return [...(b.ahead ? [['⇡' + b.ahead, 'cyan']] : []), ...(b.ahead && b.behind ? [[' ']] : []), ...(b.behind ? [['⇣' + b.behind, 'mag']] : []), ...(!b.ahead && !b.behind ? [['=', 'green']] : [])];
+}
+function rowSegs(node, row, W) {
+  switch (node.type) {
+    case 'repos': {
+      const r = row.r, fetching = S.fetching.has(fk(r));
+      const right = [...(fetching ? [[spinner(), 'cyan']] : glyphSegs(r)), ...wsBadge(r.path)];
+      return lr([[r.path === '.' ? '. (root)' : truncL(r.path.replace(/^repos\//, ''), W), r.att ? 'fg' : 'dim']], right.length ? right : [['✓', 'green']], W);
+    }
+    case 'repo': return lr([[row.sec.label, row.sec.n === 0 ? 'mute' : 'fg']], row.sec.n === null ? [['›', 'dim']] : [[String(row.sec.n), row.sec.n ? row.sec.cls : 'mute']], W);
+    case 'files': return fit([[row.st, row.st === '??' ? 'red' : row.st[0] !== ' ' ? 'green' : 'yellow'], [' '], [truncL(row.f, W - 3)]], W);
+    case 'commits': { const c = row.c; return lr([[c.hash.slice(0, 7) + ' ', c.kind === 'ahead' ? 'cyan' : c.kind === 'behind' ? 'mag' : 'yellow'], [c.subject]], [[c.age, 'dim']], W); }
+    case 'branches': return lr(branchLeft(row.b), branchRight(row.b), W);
+    case 'commit': return fit([[' M', 'yellow'], [' '], [truncL(row.f, W - 3)]], W);
+  }
+  return fit([['?']], W);
+}
+function diffLines(d, W, gutter = W >= 48) {
+  return d.map(l => {
+    if (l.k === '@') return { segs: fit([[l.t, 'cyan']], W) };
+    const g = gutter ? [[padL(l.o ?? '', 4) + ' ' + padL(l.n ?? '', 4) + ' ', 'mute']] : [];
+    const cls = l.k === '+' ? 'green' : l.k === '-' ? 'red' : '';
+    return { segs: fit([...g, [l.k === ' ' ? ' ' : l.k, cls], [l.t.replace(/\t/g, '  '), cls]], W), cls: l.k === '+' ? 'addl' : l.k === '-' ? 'dell' : '' };
+  });
+}
+function docOf(node, W) {
+  const r = repo(node.repo);
+  if (node.type === 'diff') {
+    const d = diffOf(r, node.file, node.st, node.hash || '');
+    const add = d.filter(l => l.k === '+').length, del = d.filter(l => l.k === '-').length;
+    const head = [
+      { segs: lr([[truncL(node.file, W - 12), 'fg b']], [['+' + add, 'green'], [' '], ['−' + del, 'red']], W) },
+      { segs: fit([[node.hash ? `in ${node.hash}` : node.st === '??' ? 'untracked' : node.st[0] !== ' ' ? 'staged' : 'unstaged', 'dim']], W) },
+    ];
+    return [...head, ...diffLines(d, W)];
+  }
+  if (node.type === 'commit') {
+    const c = cacheFor(r).commits[node.hash];
+    const out = [
+      { segs: fit([['commit ', 'dim'], [c.hash, 'yellow']], W) },
+      { segs: fit([[`${c.author} · ${c.age}`, 'dim'], c.kind === 'ahead' ? [' · not pushed', 'cyan'] : c.kind === 'behind' ? [' · not pulled', 'mag'] : ['']], W) },
+      { segs: fit([['']], W) },
+      { segs: fit([['    ' + c.subject, 'fg']], W) },
+      { segs: fit([['']], W) },
+    ];
+    for (const f of c.files) {
+      out.push({ segs: fit([['── ' + f + ' ' + '─'.repeat(W), 'blue']], W) });
+      out.push(...diffLines(diffOf(r, f, ' M', c.hash), W));
+    }
+    return out;
+  }
+  if (node.type === 'branch') {
+    const b = branchesOf(r).find(x => x.name === node.branch);
+    const out = [
+      { segs: fit([['branch ', 'dim'], [b.name, 'green b']], W) },
+      { segs: fit(b.remoteOnly ? [['remote-only branch: not checked out locally', 'dim']] : b.upstream ? [['tracks ', 'dim'], [b.upstream], ['  '], ...(b.ahead ? [['⇡' + b.ahead + ' ', 'cyan']] : []), ...(b.behind ? [['⇣' + b.behind, 'mag']] : []), ...(!b.ahead && !b.behind ? [['up to date', 'green']] : [])] : [['no upstream: never pushed', 'red']], W) },
+      { segs: fit([['']], W) },
+      { segs: fit([['Recent commits', 'dim b']], W) },
+    ];
+    branchLog(r, b).slice(0, 8).forEach(c => out.push({ segs: lr([['  ' + c.hash + ' ', 'yellow'], [c.subject]], [[c.author + ' ' + c.age, 'dim']], W) }));
+    return out;
+  }
+  return [];
+}
+
+/* ================= session state ================= */
+const S = {
+  scenario: 'typical', data: { '~/work': tag('~/work', typical()), '~/blog': tag('~/blog', blogSet()) },
+  rootsCfg: ['~/work', '~/blog'], view: '~/work', ttl: 15, fetching: new Set(), webBumped: false,
+  workspaces: [], activeWs: 'w1', wsSeq: 3, seenMap: {}, wsTokens: {}, flash: {},
+  seq: 0, reports: [], log: [], countdown: 30, agentDone: false,
+};
+Object.defineProperty(S, 'repos', { get() { return S.data[S.view] || []; } });
+const G = { filter: '', filtering: false };
+function freshWorkspaces() {
+  S.workspaces = [
+    { id: 'w1', name: 'work', cwd: '~/work', tabs: [{ title: 'agents', panes: [{ kind: 'agent', agent: 'claude' }], focus: 0, zoom: false }], activeTab: 0 },
+    { id: 'w2', name: 'api', cwd: '~/work/repos/acme/api', tabs: [{ title: 'api', panes: [{ kind: 'shell', cwd: '~/work/repos/acme/api' }, { kind: 'agent', agent: 'codex' }], focus: 0, zoom: false }], activeTab: 0 },
+    { id: 'w3', name: 'blog', cwd: '~/blog', tabs: [{ title: 'blog', panes: [{ kind: 'shell', cwd: '~/blog' }], focus: 0, zoom: false }], activeTab: 0 },
+  ];
+  S.activeWs = 'w1'; S.wsSeq = 3;
+}
+function resetNav() {
+  G.stack = [{ type: 'repos', cursor: 0, offset: 0, scroll: 0 }];
+  G.d2 = { focus: 'list', cursor: 0, offset: 0, tab: 0, stack: [], tcur: 0, toff: 0 };
+  G.d3 = { mode: 'rail', cursor: 0, offset: 0, pcur: 0, poff: 0, dscroll: 0 };
+}
+freshWorkspaces(); resetNav();
+const activeWs = () => S.workspaces.find(w => w.id === S.activeWs);
+const curTab = () => { const w = activeWs(); return w.tabs[w.activeTab]; };
+function rootOf(cwd, roots = S.rootsCfg) {
+  return roots.filter(r => cwd === r || cwd.startsWith(r + '/')).sort((a, b) => b.length - a.length)[0] || null;
+}
+function deepest(root, cwd) {
+  const rel = cwd === root ? '.' : cwd.slice(root.length + 1);
+  let best = null;
+  for (const r of S.data[root] || []) if (r.path === '.' || rel === r.path || rel.startsWith(r.path + '/')) if (!best || r.path.length > best.path.length) best = r;
+  return best;
+}
+// what Herdr's own branch / git_status see: any git repo, whatever githerd's config says
+function herdrRepoAt(cwd) { const root = rootOf(cwd, Object.keys(S.data)); const r = root && deepest(root, cwd); return r ? derive(r) : null; }
+// what githerd sees: only configured roots
+function roleOf(ws) {
+  const root = rootOf(ws.cwd);
+  if (!root) return { role: 'outside', root: null, repo: null };
+  const r = deepest(root, ws.cwd);
+  if (!r || r.path === '.') return { role: 'root', root, repo: '.' };
+  return { role: 'repo', root, repo: r.path };
+}
+function githerdPane() { for (const w of S.workspaces) for (const t of w.tabs) for (const p of t.panes) if (p.kind === 'githerd') return { w, t, p }; return null; }
+function githerdFocused() { const t = curTab(); const p = t.panes[t.focus]; return p && p.kind === 'githerd'; }
+
+/* ================= reporting / sync ================= */
+function log(msg) { S.log.unshift(`${new Date().toTimeString().slice(0, 8)}  ${msg}`); S.log = S.log.slice(0, 60); }
+const WS_KEYS = ['repos', 'changes', 'stale'];
+function sync(trigger, remap = true) {
+  // remap = re-read the workspace list + cwds from Herdr (herdr api snapshot); the post-fetch report of the same hook run reuses what it read at start
+  S.seq++;
+  const cmds = [`# ${trigger}${remap ? '\n$ herdr api snapshot   # workspaces + pane cwds → workspace ↔ repo map' : ''}`];
+  if (remap) S.seenMap = {};
+  if (!S.rootsCfg.length) cmds.push('# roots file is empty or missing → nothing to report');
+  for (const w of S.workspaces) {
+    if (remap || !S.seenMap[w.id]) S.seenMap[w.id] = roleOf(w);
+    const role = S.seenMap[w.id];
+    let tk = [];
+    if (role.role === 'root') {
+      const d = summaryOf(S.data[role.root] || []);
+      tk.push(['repos', d.att ? `${d.att}/${d.total}` : `✓${d.total}`, d.att ? 'yellow' : 'green']);
+      if (d.stale) tk.push(['stale', '⚠' + d.stale, 'red']);
+    } else if (role.role === 'repo') {
+      const r = derive(S.data[role.root].find(x => x.path === role.repo)), parts = [];
+      if (r.unc) parts.push('●' + r.unc);
+      if (r.noUp) parts.push('∅');
+      if (parts.length) tk.push(['changes', parts.join(' '), 'yellow']);
+      if (r.stale) tk.push(['stale', '⚠', 'red']);
+    }
+    const prev = JSON.stringify(S.wsTokens[w.id] || []);
+    S.wsTokens[w.id] = tk;
+    if (prev !== JSON.stringify(tk)) S.flash[w.id] = Date.now();
+    if (role.role === 'outside') {
+      cmds.push(prev !== '[]' ? `$HERDR_BIN_PATH workspace report-metadata ${w.id} --source githerd --seq ${S.seq} ${WS_KEYS.map(k => '--clear-token ' + k).join(' ')}   # left every root` : `#   ${w.id} ${w.name}: ${w.cwd} is outside every root → nothing reported`);
+      continue;
+    }
+    const set = tk.map(([k, v]) => `--token ${k}=${JSON.stringify(v)}`);
+    const clear = WS_KEYS.filter(k => !tk.some(([n]) => n === k)).map(k => `--clear-token ${k}`);
+    cmds.push(`$HERDR_BIN_PATH workspace report-metadata ${w.id} --source githerd --seq ${S.seq} ${[...set, ...clear].join(' ')}`);
+  }
+  S.reports.unshift(cmds.join('\n'));
+  S.reports = S.reports.slice(0, 3);
+}
+function refresh(trigger, force = false) {
+  const due = S.rootsCfg.flatMap(rt => S.data[rt] || []).filter(r => r.remote && (force || r.fetched >= S.ttl || r.stale));
+  if (due.length) { log(`${trigger}: ${due.length} repo(s) need fetch (TTL ${S.ttl}m) → fetch, then report`); fetchRepos(due, trigger); }
+  else log(`${trigger}: local status only`);
+  sync(trigger);
+  render();
+}
+function fetchRepos(list, trigger) {
+  const todo = list.filter(r => !S.fetching.has(fk(r)));
+  todo.forEach(r => S.fetching.add(fk(r)));
+  todo.forEach((r, i) => setTimeout(() => {
+    S.fetching.delete(fk(r));
+    if (S.scenario === 'offline') r.stale = 'Could not resolve host: git.example.com';
+    else if (fk(r) === '~/work:repos/oss/fastqueue' && S.scenario !== 'clean') r.stale = 'Permission denied (publickey)';
+    else {
+      r.stale = null; r.fetched = 0;
+      if (fk(r) === '~/work:repos/acme/web' && !S.webBumped && S.scenario !== 'clean') { S.webBumped = true; r.behind += 1; r.behindLog.unshift(['0ddba11', 'Add cookie banner']); }
+    }
+    if (!S.fetching.size) { log('fetch done'); sync(trigger + ' (after fetch)', false); }
+    render();
+  }, 300 + i * 70 + (i % 3) * 110));
+}
+function herdrEvent(name, detail) {
+  log(`Herdr event ${name}${detail ? ' ' + detail : ''} → [[events]] hook: githerd herdr sync`);
+  refresh(`event ${name}`);
+}
+
+/* ================= sidebar ================= */
+const ICON = { working: ['◐', 'yellow'], done: ['●', 'green'], idle: ['○', 'dim'] };
+function gitStatusOf(r) { const g = []; if (r && r.ahead) g.push(['↑' + r.ahead, 'green']); if (r && r.behind) g.push([(g.length ? ' ' : '') + '↓' + r.behind, 'red']); return g; }
+function renderSidebar() {
+  const W = 33, L = [];
+  L.push(line([[' SPACES', 'dim']]));
+  for (const w of S.workspaces) {
+    const on = w.id === S.activeWs;
+    const r = herdrRepoAt(w.cwd);
+    const agentHere = w.tabs.some(t => t.panes.some(p => p.kind === 'agent'));
+    const ic = agentHere ? (w.id === 'w1' && !S.agentDone ? ICON.working : ICON.done) : ICON.idle;
+    const branch = r ? (r.branch || r.detached) : '';
+    const git = r ? gitStatusOf(r) : [];
+    const row2 = [['   ']];
+    if (branch) row2.push([branch, 'dim']);
+    if (git.length) row2.push([' · ', 'mute'], ...git);
+    (S.wsTokens[w.id] || []).forEach(([, v, cls]) => row2.push([' · ', 'mute'], [v, cls]));
+    const fl = S.flash[w.id] && Date.now() - S.flash[w.id] < 900 ? ' flash' : '';
+    L.push(`<div class="ws ${on ? 'sel' : ''}" data-ws="${w.id}">` + line(fit([[on ? '▌' : ' ', 'blue'], [ic[0], ic[1]], [' '], [w.name, on ? 'fg b' : '']], W)) + line(fit(row2, W), fl) + '</div>');
+  }
+  L.push(line([['']]));
+  L.push(line([[' AGENTS', 'dim']]));
+  const agents = [{ name: 'claude', ws: 'w1', st: S.agentDone ? 'done' : 'working', cwd: '~/work' }, { name: 'codex', ws: 'w2', st: 'idle', cwd: '~/work/repos/acme/api' }];
+  for (const a of agents) {
+    const w = S.workspaces.find(x => x.id === a.ws); if (!w) continue;
+    const ic = ICON[a.st];
+    L.push(line(fit([['  '], [ic[0], ic[1]], [' '], [a.name], [' · ', 'mute'], [a.st, 'dim']], W)));
+    L.push(line(fit([['    '], [w.name, 'dim']], W)));
+  }
+  const el = document.getElementById('sidebar');
+  el.innerHTML = L.join('');
+  el.querySelectorAll('[data-ws]').forEach(n => n.onclick = () => focusWorkspace(n.dataset.ws, 'sidebar click'));
+}
+
+/* ================= main area ================= */
+function shellLines(cwd) {
+  const r = herdrRepoAt(cwd);
+  if (!r) return [line([[cwd, 'blue'], [' ❯ ', 'green'], [' ', 'cursor']])];
+  const head = r.detached ? `HEAD (detached at ${r.detached})` : r.branch + (r.upstream ? '...' + r.upstream : '');
+  const tr = [r.ahead ? `ahead ${r.ahead}` : '', r.behind ? `behind ${r.behind}` : ''].filter(Boolean).join(', ');
+  const prompt = [[cwd, 'blue'], [' '], [r.branch || r.detached, 'mag'], [r.unc ? '*' : '', 'yellow'], [' ❯ ', 'green']];
+  return [
+    line([...prompt, ['git status -sb']]),
+    line([['## ' + head + (tr ? ` [${tr}]` : ''), 'green']]),
+    ...r.files.slice(0, 6).map(([st, f]) => line([[st, st === '??' ? 'red' : 'yellow'], [' ' + f]])),
+    line([...prompt, [' ', 'cursor']]),
+  ];
+}
+function agentLines(p) {
+  if (p.agent === 'codex') return [line([['> ', 'blue'], ['review open PR comments']]), line([['']]), line([['✓ ', 'green'], ['3 comments answered', 'dim']]), line([['']]), line([['> ', 'blue'], [' ', 'cursor']])];
+  return [
+    line([['> ', 'blue'], ['add a session refresh endpoint in repos/acme/api']]), line([['']]),
+    line([['• ', 'dim'], ['Editing repos/acme/api/src/auth.ts']]), line([['• ', 'dim'], ['Editing repos/acme/api/src/routes.ts']]),
+    S.agentDone ? line([['✓ ', 'green'], ['done · 3 files changed · not committed']]) : line([[spinner() + ' ', 'yellow'], ['running tests…', 'dim']]),
+    line([['']]), line([['> ', 'blue'], [' ', 'cursor']]),
+  ];
+}
+let CELL = null;
+function cell() {
+  if (CELL) return CELL;
+  const h = document.getElementById('herdr');
+  const s = document.createElement('span');
+  s.textContent = 'M'.repeat(200); s.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
+  h.appendChild(s);
+  const w = s.getBoundingClientRect().width / 200;
+  s.remove();
+  return (CELL = { w, h: 12.5 * 1.45 });
+}
+function githerdBasis() {
+  if (variant === 'D3' && G.d3.mode === 'rail') return '0 0 42%';
+  return '1 1 0';
+}
+function renderMain() {
+  const w = activeWs(), t = curTab();
+  let tabs = w.tabs.map((x, i) => `<div class="tab ${i === w.activeTab ? 'on' : ''}">${i + 1}:${esc(x.title)}${x.zoom ? ' Z' : ''}</div>`).join('');
+  if (t.zoom) tabs += `<div class="zoompill">ZOOM</div>`;
+  const visible = t.zoom ? [t.panes[t.focus]] : t.panes;
+  const panes = visible.map(p => {
+    const i = t.panes.indexOf(p), focus = i === t.focus;
+    let title, body = '', extra = '', style = '';
+    if (p.kind === 'agent') { title = `${p.agent} · ${w.cwd}`; body = agentLines(p).join(''); }
+    else if (p.kind === 'shell') { title = `shell · ${p.cwd}`; body = shellLines(p.cwd).join(''); }
+    else if (p.kind === 'lazygit') { title = `lazygit · ${p.cwd}`; body = [line([['lazygit', 'green b'], [' runs here (cwd ' + p.cwd + ')', 'dim']]), line([['x closes this pane', 'dim']])].join(''); }
+    else if (p.kind === 'githerd') { title = `githerd · ${S.view || 'no roots'} · ${variant === 'D3' && G.d3.mode === 'page' ? 'repo page' : variant === 'D3' ? 'rail' : VARIANTS[variant].name}`; extra = 'githerd'; if (!t.zoom) style = `flex:${githerdBasis()}`; }
+    return `<div class="pane ${extra} ${focus ? 'focus' : ''}" style="${style}"><div class="ph">${esc(title)}</div><div class="pc">${body}</div></div>`;
+  }).join('');
+  document.getElementById('main').innerHTML = `<div class="tabs">${tabs}</div><div class="panes">${panes}</div>`;
+  const gp = document.querySelector('.pane.githerd .pc');
+  if (gp) {
+    const c = cell();
+    const W = Math.max(20, Math.floor(gp.clientWidth / c.w) - 2); // clientWidth includes the 1ch padding on each side
+    const H = Math.max(8, Math.floor(gp.clientHeight / c.h));
+    gp.innerHTML = renderGitherd(W, H).join('');
+  }
+  const hint = githerdFocused()
+    ? ' githerd focused │ j/k move │ l/→ in │ h/← back │ z zoom │ o open in workspace │ s shell │ L lazygit │ f fetch │ esc leave'
+    : ` ${w.name} │ g githerd │ o next pane │ w next workspace │ z zoom │ x close pane │ 1-9 tab`;
+  document.getElementById('statusbar').textContent = hint;
+}
+
+/* ================= githerd pane: shared chrome ================= */
+function headerLines(W) {
+  const d = summary();
+  const right = S.fetching.size ? [[spinner() + ' fetching ' + S.fetching.size, 'cyan']] : [[`↻ ${S.countdown}s`, 'mute']];
+  const ws = activeWs();
+  return [
+    line(lr([[`${d.att}/${d.total}`, d.att ? 'yellow b' : 'green b'], [' need attention', 'dim'], ...(d.stale ? [[' · '], [`${d.stale} stale`, 'red']] : [])], right, W)),
+    G.filtering || G.filter
+      ? line(fit([['/', 'blue'], [G.filter, 'fg'], [G.filtering ? ' ' : '', 'cursor'], [G.filtering ? '  enter keep · esc clear' : '  (/ to edit)', 'mute']], W))
+      : line(fit([['ws ', 'mute'], [ws.name, 'blue'], [S.seenMap[ws.id] ? ` → ${S.seenMap[ws.id].role === 'root' ? 'root' : S.seenMap[ws.id].role === 'repo' ? S.seenMap[ws.id].repo : 'outside root'}` : '', 'mute'], ['  / filter', 'mute']], W)),
+  ];
+}
+function footer(W, segs) { return [line([['─'.repeat(W), 'mute']]), line(fit(segs, W))]; }
+function listColumn(node, W, H, focused, active) {
+  const rows = rowsOf(node);
+  node.cursor = Math.max(0, Math.min(node.cursor || 0, rows.length - 1));
+  node.offset = node.offset || 0;
+  if (node.cursor < node.offset) node.offset = node.cursor;
+  if (node.cursor >= node.offset + H) node.offset = node.cursor - H + 1;
+  const out = [];
+  for (let i = 0; i < H; i++) {
+    const idx = node.offset + i, row = rows[idx];
+    if (!row) { out.push({ segs: fit([[i === 0 ? (node.type === 'files' ? ' nothing to commit' : node.type === 'commits' ? ' no commits' : ' empty') : '', 'mute']], W) }); continue; }
+    const sel = idx === node.cursor;
+    out.push({ segs: rowSegs(node, row, W), cls: sel ? (focused ? 'sel' : active ? 'sel2' : '') : '' });
+  }
+  return out;
+}
+function docColumn(node, W, H) {
+  const lines = docOf(node, W);
+  node.scroll = Math.max(0, Math.min(node.scroll || 0, Math.max(0, lines.length - H)));
+  const out = lines.slice(node.scroll, node.scroll + H);
+  while (out.length < H) out.push({ segs: fit([['']], W) });
+  return out;
+}
+function joinColumns(cols, H) {
+  const L = [];
+  for (let i = 0; i < H; i++) {
+    L.push('<div class="ln">' + cols.map((c, j) => {
+      const r = c.lines[i];
+      return (j ? '<span class="mute">│</span>' : '') + `<span class="${r.cls || ''}">${segHtml(r.segs)}</span>`;
+    }).join('') + '</div>');
+  }
+  return L;
+}
+function selectedRepoPath() {
+  if (variant === 'D2') { const rs = railRepos(); return rs[G.d2.cursor] && rs[G.d2.cursor].path; }
+  if (variant === 'D3') { const rs = railRepos(); return rs[G.d3.cursor] && rs[G.d3.cursor].path; }
+  const top = G.stack[G.stack.length - 1];
+  if (top.type === 'repos') { const rs = rowsOf(top); return rs[top.cursor] && rs[top.cursor].r.path; }
+  return top.repo;
+}
+
+/* ================= D1: Miller columns ================= */
+function renderD1(W, H) {
+  const L = headerLines(W);
+  const bodyH = H - L.length - 3;
+  const stack = G.stack, fi = stack.length - 1, focused = stack[fi];
+  let preview = null;
+  if (!isDoc(focused)) {
+    const rows = rowsOf(focused), sel = rows[Math.min(focused.cursor || 0, rows.length - 1)];
+    if (sel && sel.next) preview = { ...sel.next, cursor: 0, offset: 0, scroll: 0, preview: true };
+  }
+  const want = n => isDoc(n) ? 46 : n.type === 'repos' ? 30 : n.type === 'commits' ? 34 : 24;
+  const chosen = [{ n: focused, w: want(focused), role: 'focus' }];
+  let used = chosen[0].w;
+  if (used > W) chosen[0].w = used = W;
+  if (preview && used + 1 + 18 <= W) { const w = Math.min(want(preview), W - used - 1); chosen.push({ n: preview, w, role: 'preview' }); used += 1 + w; }
+  for (let i = fi - 1; i >= 0; i--) { const w = want(stack[i]); if (used + 1 + w <= W) { chosen.unshift({ n: stack[i], w, role: 'parent' }); used += 1 + w; } else break; }
+  const grow = chosen.find(c => isDoc(c.n)) || chosen[chosen.length - 1];
+  grow.w += W - used;
+  const hidden = fi + 1 - chosen.filter(c => c.role !== 'preview').length;
+  L.push(line(fit([...(hidden > 0 ? [[`‹${hidden} `, 'mute']] : []), ...[].concat(...chosen.map((c, j) => [[j ? ' › ' : '', 'mute'], [titleOf(c.n), c.role === 'focus' ? 'blue b' : c.role === 'preview' ? 'mute it' : 'dim']]))], W)));
+  const cols = chosen.map(c => ({ lines: isDoc(c.n) ? docColumn(c.n, c.w, bodyH) : listColumn(c.n, c.w, bodyH, c.role === 'focus', c.role === 'parent') }));
+  L.push(...joinColumns(cols, bodyH));
+  L.push(...footer(W, [['l', 'blue'], [' in '], ['h', 'blue'], [' back '], ['o', 'blue'], [' workspace '], ['s', 'blue'], [' shell '], ['z', 'blue'], [' zoom '], ['f', 'blue'], [' fetch']]));
+  return L;
+}
+function keysD1(k) {
+  const stack = G.stack, top = stack[stack.length - 1];
+  if (k === 'j' || k === 'k') {
+    if (isDoc(top)) top.scroll = (top.scroll || 0) + (k === 'j' ? 3 : -3);
+    else { top.cursor = (top.cursor || 0) + (k === 'j' ? 1 : -1); }
+    return true;
+  }
+  if (k === 'J' || k === 'K') { if (isDoc(top)) top.scroll = (top.scroll || 0) + (k === 'J' ? 12 : -12); return true; }
+  if (k === 'l') {
+    if (isDoc(top)) return true;
+    const rows = rowsOf(top), sel = rows[top.cursor || 0];
+    if (sel && sel.next) stack.push({ ...sel.next, cursor: 0, offset: 0, scroll: 0 });
+    return true;
+  }
+  if (k === 'h') { if (stack.length > 1) stack.pop(); return true; }
+  return false;
+}
+
+/* ================= D2: list + tabbed detail ================= */
+function renderD2(W, H) {
+  const L = headerLines(W), d2 = G.d2;
+  const bodyH = H - L.length - 3;
+  const rs = railRepos();
+  d2.cursor = Math.max(0, Math.min(d2.cursor, rs.length - 1));
+  const r = rs[d2.cursor];
+  if (!r) d2.focus = 'list';
+  const narrow = W < 62;
+  const LW = narrow ? (d2.focus === 'list' ? W : 0) : Math.min(34, Math.floor(W * 0.36));
+  const RW = narrow ? (d2.focus === 'list' ? 0 : W) : W - LW - 1;
+  L.push(line(fit([[narrow ? (d2.focus === 'list' ? 'repos' : '‹ ' + r.path) : '', 'dim']], W)));
+  const cols = [];
+  if (LW) {
+    const node = { type: 'repos', cursor: d2.cursor, offset: d2.offset };
+    const lines = listColumn(node, LW, bodyH, d2.focus === 'list', d2.focus !== 'list');
+    d2.offset = node.offset;
+    cols.push({ lines });
+  }
+  if (RW && r) {
+    const secs = sections(r);
+    d2.tab = Math.max(0, Math.min(d2.tab, secs.length - 1));
+    const sec = secs[d2.tab];
+    const R_ = [];
+    R_.push({ segs: lr([[r.path === '.' ? S.view : r.path, 'fg b']], wsBadge(r.path), RW) });
+    R_.push({ segs: fit(r.detached ? [['detached at ', 'dim'], [r.detached, 'mag']] : [[r.branch, 'mag'], [' → ', 'dim'], [r.upstream || 'no upstream', r.upstream ? 'dim' : 'red'], ['  '], ...glyphSegs(r)], RW) });
+    const tabsSegs = [];
+    secs.forEach((s, i) => {
+      const label = ` ${s.label}${s.n === null ? '' : ' ' + s.n} `;
+      tabsSegs.push([label, i === d2.tab ? 'sel b' : s.n === 0 ? 'mute' : 'dim']);
+    });
+    R_.push({ segs: fit(tabsSegs, RW) });
+    const crumbs = [sec.label, ...d2.stack.map(titleOf)];
+    R_.push({ segs: fit([[crumbs.join(' › '), 'mute']], RW) });
+    const innerH = bodyH - R_.length;
+    const node = d2.stack.length ? d2.stack[d2.stack.length - 1] : Object.assign(sec.node, { cursor: d2.tcur, offset: d2.toff });
+    const lines = isDoc(node) ? docColumn(node, RW, innerH) : listColumn(node, RW, innerH, d2.focus === 'detail', false);
+    if (!d2.stack.length) { d2.tcur = node.cursor; d2.toff = node.offset; }
+    cols.push({ lines: [...R_, ...lines] });
+  }
+  L.push(...joinColumns(cols, bodyH));
+  L.push(...footer(W, d2.focus === 'list'
+    ? [['l', 'blue'], [' open repo '], ['o', 'blue'], [' workspace '], ['s', 'blue'], [' shell '], ['L', 'blue'], [' lazygit '], ['z', 'blue'], [' zoom']]
+    : [['tab', 'blue'], [' next tab '], ['l', 'blue'], [' in '], ['h', 'blue'], [' back '], ['J/K', 'blue'], [' scroll '], ['o', 'blue'], [' workspace']]));
+  return L;
+}
+function d2Node() {
+  const d2 = G.d2, r = railRepos()[d2.cursor];
+  if (d2.stack.length) return d2.stack[d2.stack.length - 1];
+  const sec = sections(r)[d2.tab];
+  return Object.assign(sec.node, { cursor: d2.tcur, offset: d2.toff });
+}
+function keysD2(k) {
+  const d2 = G.d2;
+  if (d2.focus === 'list') {
+    if (k === 'j') { d2.cursor++; return true; }
+    if (k === 'k') { d2.cursor = Math.max(0, d2.cursor - 1); return true; }
+    if (k === 'l' && railRepos().length) { d2.focus = 'detail'; d2.stack = []; d2.tcur = 0; d2.toff = 0; const r = railRepos()[d2.cursor]; d2.tab = Math.max(0, sections(r).findIndex(s => s.n)); return true; }
+    if (k === 'h') return true;
+    return false;
+  }
+  const node = d2Node();
+  if (k === 'Tab' || k === ']') { d2.tab = (d2.tab + 1) % 5; d2.stack = []; d2.tcur = 0; d2.toff = 0; return true; }
+  if (k === '[') { d2.tab = (d2.tab + 4) % 5; d2.stack = []; d2.tcur = 0; d2.toff = 0; return true; }
+  if (k === 'j' || k === 'k') {
+    const dir = k === 'j' ? 1 : -1;
+    if (isDoc(node)) node.scroll = (node.scroll || 0) + dir * 3;
+    else if (d2.stack.length) node.cursor = Math.max(0, (node.cursor || 0) + dir);
+    else d2.tcur = Math.max(0, d2.tcur + dir);
+    return true;
+  }
+  if (k === 'J' || k === 'K') { if (isDoc(node)) node.scroll = (node.scroll || 0) + (k === 'J' ? 12 : -12); return true; }
+  if (k === 'l') {
+    if (isDoc(node)) return true;
+    const rows = rowsOf(node), sel = rows[node.cursor || 0];
+    if (sel && sel.next) d2.stack.push({ ...sel.next, cursor: 0, offset: 0, scroll: 0 });
+    return true;
+  }
+  if (k === 'h') { if (d2.stack.length) d2.stack.pop(); else d2.focus = 'list'; return true; }
+  return false;
+}
+
+/* ================= D3: rail + zoom page ================= */
+function pageItems(r) {
+  const items = [];
+  const head = (label, n, cls) => items.push({ head: true, segs: [[`${label}${n === null ? '' : ' ' + n}`, cls + ' b']] });
+  head('Changes', r.unc, 'yellow');
+  r.files.forEach(([st, f]) => items.push({ node: { type: 'diff', repo: r.path, file: f, st }, segs: [[st, st === '??' ? 'red' : st[0] !== ' ' ? 'green' : 'yellow'], [' ' + f]] }));
+  if (!r.unc) items.push({ head: true, segs: [['  nothing to commit', 'mute']] });
+  head(r.noUp ? 'Local commits' : 'To push', r.ahead, 'cyan');
+  r.aheadLog.forEach(([h, s]) => { commitOf(r, h, s, 'ahead'); items.push({ node: { type: 'commit', repo: r.path, hash: h }, segs: [[h + ' ', 'cyan'], [s]] }); });
+  if (!r.ahead) items.push({ head: true, segs: [['  nothing to push', 'mute']] });
+  head('To pull', r.behind, 'mag');
+  r.behindLog.forEach(([h, s]) => { commitOf(r, h, s, 'behind'); items.push({ node: { type: 'commit', repo: r.path, hash: h }, segs: [[h + ' ', 'mag'], [s]] }); });
+  if (!r.behind) items.push({ head: true, segs: [['  nothing to pull', 'mute']] });
+  const bs = branchesOf(r);
+  head('Branches', bs.length, 'blue');
+  bs.forEach(b => items.push({ node: { type: 'branch', repo: r.path, branch: b.name }, segs: [...branchLeft(b), ['  '], ...branchRight(b)] }));
+  head('Log', null, 'dim');
+  headLog(r).slice(r.ahead, r.ahead + 6).forEach(c => items.push({ node: { type: 'commit', repo: r.path, hash: c.hash }, segs: [[c.hash + ' ', 'yellow'], [c.subject]] }));
+  return items;
+}
+function renderD3(W, H) {
+  const d3 = G.d3, rs = railRepos();
+  d3.cursor = Math.max(0, Math.min(d3.cursor, rs.length - 1));
+  if (d3.mode === 'rail') {
+    const L = headerLines(W);
+    const bodyH = H - L.length - 3;
+    L.push(line([['─'.repeat(W), 'mute']]));
+    const node = { type: 'repos', cursor: d3.cursor, offset: d3.offset };
+    const lines = listColumn(node, W, bodyH, true, false);
+    d3.offset = node.offset;
+    L.push(...lines.map(l => `<div class="ln ${l.cls || ''}">${segHtml(l.segs)}</div>`));
+    L.push(...footer(W, [['enter', 'blue'], [' page '], ['/', 'blue'], [' filter '], ['o', 'blue'], [' ws '], ['s', 'blue'], [' shell '], ['f', 'blue'], [' fetch']]));
+    return L;
+  }
+  const r = rs[d3.cursor];
+  if (!r) { d3.mode = 'rail'; return renderD3(W, H); }
+  const L = [];
+  L.push(line(lr([[r.path === '.' ? S.view : r.path, 'fg b'], ['  '], ...(r.detached ? [['detached at ' + r.detached, 'mag']] : [[r.branch, 'mag'], [' → ', 'dim'], [r.upstream || 'no upstream', r.upstream ? 'dim' : 'red']]), ['  '], ...glyphSegs(r)], [...wsBadge(r.path), ['  ' + (r.stale ? '⚠ fetch failed' : r.remote ? `fetched ${r.fetched}m ago` : 'no remote'), r.stale ? 'red' : 'mute']], W)));
+  L.push(line([['─'.repeat(W), 'mute']]));
+  const bodyH = H - 4;
+  const LW = Math.max(34, Math.floor(W * 0.38)), RW = W - LW - 1;
+  const items = pageItems(r);
+  const selectable = items.map((it, i) => it.head ? -1 : i).filter(i => i >= 0);
+  d3.pcur = Math.max(0, Math.min(d3.pcur, selectable.length - 1));
+  const selIdx = selectable[d3.pcur];
+  if (selIdx < d3.poff) d3.poff = Math.max(0, selIdx - 1);
+  if (selIdx >= d3.poff + bodyH) d3.poff = selIdx - bodyH + 1;
+  const left = [];
+  for (let i = 0; i < bodyH; i++) {
+    const it = items[d3.poff + i];
+    if (!it) { left.push({ segs: fit([['']], LW) }); continue; }
+    const sel = d3.poff + i === selIdx;
+    left.push({ segs: fit(it.head ? it.segs : [['  '], ...it.segs], LW), cls: sel ? 'sel' : '' });
+  }
+  const sel = items[selIdx];
+  const doc = sel ? Object.assign(sel.node, { scroll: d3.dscroll }) : null;
+  const right = doc ? docColumn(doc, RW, bodyH) : Array.from({ length: bodyH }, () => ({ segs: fit([['']], RW) }));
+  if (doc) d3.dscroll = doc.scroll;
+  L.push(...joinColumns([{ lines: left }, { lines: right }], bodyH));
+  L.push(...footer(W, [['read-only ', 'mute'], ['j/k', 'blue'], [' move '], ['J/K', 'blue'], [' scroll diff '], ['esc', 'blue'], [' rail '], ['o', 'blue'], [' workspace '], ['s', 'blue'], [' shell '], ['L', 'blue'], [' lazygit']]));
+  return L;
+}
+function keysD3(k) {
+  const d3 = G.d3;
+  if (d3.mode === 'rail') {
+    if (k === 'j') { d3.cursor++; return true; }
+    if (k === 'k') { d3.cursor = Math.max(0, d3.cursor - 1); return true; }
+    if (k === 'l' && railRepos().length) { d3.mode = 'page'; d3.pcur = 0; d3.poff = 0; d3.dscroll = 0; setZoom(true, 'githerd auto-zoom'); return true; }
+    if (k === 'h') return true;
+    return false;
+  }
+  if (k === 'j' || k === 'k') { d3.pcur = Math.max(0, d3.pcur + (k === 'j' ? 1 : -1)); d3.dscroll = 0; return true; }
+  if (k === 'J' || k === 'K') { d3.dscroll = Math.max(0, d3.dscroll + (k === 'J' ? 6 : -6)); return true; }
+  if (k === 'l') return true;
+  if (k === 'h') { d3.mode = 'rail'; setZoom(false, 'githerd back to rail'); return true; }
+  return false;
+}
+
+function renderGitherd(W, H) {
+  if (!S.view) return [line(fit([['No roots configured.', 'yellow b']], W)), line(fit([['Add paths to', 'dim']], W)), line(fit([['$HERDR_PLUGIN_CONFIG_DIR/roots', 'fg']], W)), line(fit([['one per line, e.g. ~/work', 'dim']], W))];
+  return variant === 'D1' ? renderD1(W, H) : variant === 'D2' ? renderD2(W, H) : renderD3(W, H); }
+
+/* ================= actions ================= */
+function setZoom(on, why) {
+  const t = curTab();
+  if (t.zoom === on) return;
+  t.zoom = on;
+  log(`${why}: $ herdr pane zoom --${on ? 'on' : 'off'} --current`);
+}
+function openGitherd(source) {
+  const t = curTab();
+  let i = t.panes.findIndex(p => p.kind === 'githerd');
+  if (i === -1) {
+    const old = githerdPane();
+    if (old) { old.t.panes.splice(old.t.panes.indexOf(old.p), 1); old.t.focus = 0; old.t.zoom = false; log(`githerd pane closed in ${old.w.name} (one per session in this mock)`); }
+    t.panes.push({ kind: 'githerd' });
+    i = t.panes.length - 1;
+    log(`${source}: $ herdr plugin pane open --plugin githerd --entrypoint rail --placement split --direction right`);
+    if (variant === 'D3') log('$ herdr pane resize --direction right --amount 0.15 --current   # narrow the rail');
+    const ws = activeWs(), role = S.seenMap[ws.id];
+    const view = (role && role.root) || S.rootsCfg[0] || null;
+    if (view !== S.view) G.filter = '';
+    S.view = view;
+    resetNav();
+    if (role && role.role === 'repo') {
+      const idx = railRepos().findIndex(r => r.path === role.repo);
+      if (idx >= 0) { G.stack[0].cursor = idx; G.d2.cursor = idx; G.d3.cursor = idx; log(`githerd opened in ws ${ws.name} → cursor starts on its repo ${role.repo}`); }
+    }
+    if (role && role.role === 'outside') log(`ws ${ws.name} is outside every root → githerd shows the first configured root (${S.view || 'none'})`);
+    else if (role) log(`githerd shows root ${S.view} (root of ws ${ws.name})`);
+  } else log(`${source}: focus existing githerd pane`);
+  t.focus = i;
+  sync(source);
+  render();
+}
+function focusWorkspace(id, why) {
+  if (id === S.activeWs) return;
+  S.activeWs = id;
+  herdrEvent('workspace.focused', `(${activeWs().name}, ${why})`);
+}
+function openInWorkspace(path) {
+  if (!path) return;
+  const target = S.workspaces.find(w => { const m = S.seenMap[w.id]; return m && m.root === S.view && (path === '.' ? m.role === 'root' : m.role === 'repo' && m.repo === path); });
+  if (target) {
+    log(`o ${path}: ws ${target.name} already maps to it → focus it, no duplicate`);
+    log(`$ herdr workspace focus ${target.id}`);
+    S.activeWs = target.id;
+    refresh('event workspace.focused');
+    return;
+  }
+  const id = 'w' + (++S.wsSeq), cwd = absPath(path);
+  S.workspaces.push({ id, name: short(path), cwd, tabs: [{ title: short(path), panes: [{ kind: 'shell', cwd }], focus: 0, zoom: false }], activeTab: 0 });
+  log(`o ${path}: no workspace maps to it → $ herdr workspace create --cwd ${cwd} --label ${short(path)} --focus`);
+  S.activeWs = id;
+  herdrEvent('workspace.created', `(${short(path)})`);
+}
+function openShell(path, kind) {
+  if (!path) return;
+  const t = curTab(), cwd = absPath(path);
+  const gi = t.panes.findIndex(p => p.kind === 'githerd');
+  t.panes.splice(gi === -1 ? t.panes.length : gi, 0, { kind, cwd });
+  t.focus = gi === -1 ? t.panes.length - 1 : gi;
+  t.zoom = false;
+  log(`$ herdr pane split --pane <githerd pane> --direction left --cwd ${cwd} --focus`);
+  if (kind === 'lazygit') log('$ herdr pane run <new pane> lazygit');
+  render();
+}
+
+/* ================= keys ================= */
+function githerdKeys(e) {
+  if (G.filtering) {
+    if (e.key === 'Escape') { G.filtering = false; G.filter = ''; }
+    else if (e.key === 'Enter') G.filtering = false;
+    else if (e.key === 'Backspace') G.filter = G.filter.slice(0, -1);
+    else if (e.key.length === 1) G.filter += e.key;
+    else return false;
+    G.stack[0].cursor = 0; G.d2.cursor = 0; G.d3.cursor = 0; G.d3.offset = 0;
+    render(); return;
+  }
+  const atRepos = variant === 'D1' ? G.stack.length === 1 : variant === 'D2' ? G.d2.focus === 'list' : G.d3.mode === 'rail';
+  if (e.key === '/' && atRepos) { G.filtering = true; render(); return; }
+  let k = e.key;
+  if (k === 'ArrowDown') k = 'j'; else if (k === 'ArrowUp') k = 'k'; else if (k === 'ArrowRight' || k === 'Enter') k = 'l'; else if (k === 'ArrowLeft' || k === 'Backspace') k = 'h';
+  if (k === 'Escape') {
+    const atTop = variant === 'D1' ? G.stack.length === 1 : variant === 'D2' ? G.d2.focus === 'list' : G.d3.mode === 'rail';
+    if (!atTop) k = 'h';
+    else { const t = curTab(); t.focus = t.panes.findIndex(p => p.kind !== 'githerd'); if (t.focus < 0) t.focus = 0; t.zoom = false; render(); return; }
+  }
+  const handled = variant === 'D1' ? keysD1(k) : variant === 'D2' ? keysD2(k) : keysD3(k);
+  if (handled) { render(); return; }
+  const path = selectedRepoPath();
+  if (k === 'z') { setZoom(!curTab().zoom, 'z'); render(); return; }
+  if (k === 'o') { openInWorkspace(path); return; }
+  if (k === 's') { openShell(path, 'shell'); return; }
+  if (k === 'L') { openShell(path, 'lazygit'); return; }
+  if (k === 'f') { refresh('githerd f', true); return; }
+  if (k === 'r') { refresh('githerd r'); return; }
+  return false;
+}
+function mainKeys(e) {
+  const w = activeWs(), t = curTab();
+  if (e.key === 'g') { openGitherd('prefix g'); return; }
+  if (e.key === 'o') { t.focus = (t.focus + 1) % t.panes.length; render(); return; }
+  if (e.key === 'w') { const i = S.workspaces.indexOf(w); focusWorkspace(S.workspaces[(i + 1) % S.workspaces.length].id, 'key w'); return; }
+  if (e.key === 'z') { setZoom(!t.zoom, 'Herdr zoom key'); render(); return; }
+  if (e.key === 'x') {
+    const p = t.panes[t.focus];
+    if (t.panes.length > 1) { t.panes.splice(t.focus, 1); t.focus = 0; t.zoom = false; if (p.kind === 'githerd') log('githerd pane closed: hooks keep the sidebar tokens fresh'); }
+    render(); return;
+  }
+  if (/^[1-9]$/.test(e.key) && w.tabs[+e.key - 1]) { w.activeTab = +e.key - 1; render(); return; }
+  return false;
+}
+document.addEventListener('keydown', e => {
+  const tgt = e.target;
+  if (tgt.closest && tgt.closest('input, textarea, select, [contenteditable]')) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const inG = githerdFocused();
+  if (!inG && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); cycle(e.key === 'ArrowLeft' ? -1 : 1); return; }
+  const handled = inG ? githerdKeys(e) : mainKeys(e);
+  if (handled !== false) e.preventDefault();
+});
+document.getElementById('herdr').addEventListener('mousedown', () => setTimeout(() => document.getElementById('herdr').focus(), 0));
+
+/* ================= inspector ================= */
+function renderInspector() {
+  const v = VARIANTS[variant];
+  document.getElementById('iTitle').textContent = `${variant} · ${v.name}`;
+  document.getElementById('iIdea').textContent = v.idea;
+  document.getElementById('iProbesTitle').textContent = variant === 'D3' ? 'Decided (rounds 1–3)' : 'Not chosen · what it asked';
+  document.getElementById('iProbes').innerHTML = (variant === 'D3' ? DECIDED : [...v.probes, ...COMMON_PROBES]).map(p => `<li>${esc(p)}</li>`).join('');
+  document.getElementById('iReports').textContent = S.reports.join('\n\n') || '(nothing yet)';
+  document.getElementById('iLog').textContent = S.log.join('\n');
+  const rows = S.workspaces.map(w => {
+    const actual = roleOf(w), seen = S.seenMap[w.id];
+    const fmt = x => !x ? '—' : x.role === 'root' ? `root ${x.root}` : x.role === 'repo' ? `${x.root} › ${x.repo}` : 'outside every root';
+    const out = !seen || fmt(seen) !== fmt(actual);
+    return `<tr><td>${w.id}${w.id === S.activeWs ? '▸' : ''}</td><td>${esc(w.name)}</td><td>${esc(w.cwd)}</td><td>${esc(fmt(seen))}${out ? `<br><span class="warn">⚠ out of sync: really ${esc(fmt(actual))}</span>` : ''}</td></tr>`;
+  }).join('');
+  document.getElementById('iMap').innerHTML = `<tr><th>id</th><th>name</th><th>cwd</th><th>githerd sees</th></tr>${rows}`;
+  document.getElementById('iConfig').textContent =
+`# herdr-plugin.toml  (repo root)
+id = "githerd"
+name = "githerd"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+platforms = ["linux", "macos"]
+
+[[build]]                                    # runs on install / update
+command = ["go", "build", "-o", "bin/githerd", "./cmd/githerd"]
+
+[[actions]]
+id = "rail"
+title = "Repo rail"
+contexts = ["workspace"]
+command = ["./bin/githerd", "herdr", "rail"]  # open or focus the rail
+
+[[panes]]
+id = "rail"
+title = "githerd"
+placement = "split"
+command = ["./bin/githerd", "rail"]          # TUI; refreshes every 30 s
+
+[[startup]]                                  # tokens don't survive a restart
+command = ["./bin/githerd", "herdr", "sync"]
+
+[[events]]
+on = "workspace.created"
+command = ["./bin/githerd", "herdr", "sync"]
+[[events]]
+on = "workspace.closed"
+command = ["./bin/githerd", "herdr", "sync"]
+[[events]]
+on = "workspace.focused"
+command = ["./bin/githerd", "herdr", "sync"]
+[[events]]
+on = "pane.agent_status_changed"             # acts on done | idle only
+command = ["./bin/githerd", "herdr", "sync"]
+
+# $HERDR_PLUGIN_CONFIG_DIR/roots
+${S.rootsCfg.join('\n') || '(empty)'}
+
+# ~/.config/herdr/config.toml  (user pastes)
+[[keys.command]]
+key = "prefix+g"
+type = "plugin_action"
+command = "githerd.rail"
+
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status",
+    { token = "$repos", fg = "#e5b567", rules = [{ starts_with = "✓", fg = "#9ccc7a" }] },
+    { token = "$changes", fg = "#e5b567" },
+    { token = "$stale", fg = "#f07178" }],
+]`;
+}
+function fillDirSelects() {
+  const all = Object.entries(S.data).flatMap(([root, list]) => list.map(r => r.path === '.' ? root : root + '/' + r.path));
+  const opts = all.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('') +
+    '<option value="~/work/repos/acme/api/src">~/work/repos/acme/api/src (inside a repo)</option><option value="~/work/notes">~/work/notes (in root, no nested repo)</option><option value="~/scratch">~/scratch (outside every root)</option>';
+  document.getElementById('newWsDir').innerHTML = opts;
+  document.getElementById('cdDir').innerHTML = opts;
+}
+
+/* ================= render + wiring ================= */
+function render() {
+  renderSidebar();
+  renderMain();
+  renderInspector();
+  document.getElementById('vlabel').innerHTML = `${variant} · ${esc(VARIANTS[variant].name)}<small>${KEYS.indexOf(variant) + 1}/${KEYS.length}</small>`;
+}
+function setVariant(v) {
+  variant = v;
+  const url = new URL(location.href); url.searchParams.set('variant', v); history.replaceState(null, '', url);
+  for (const w of S.workspaces) for (const t of w.tabs) t.zoom = false;
+  resetNav(); G.filter = ''; G.filtering = false;
+  const gp = githerdPane();
+  if (gp) { const ws = S.workspaces.find(w => w === gp.w); const role = S.seenMap[ws.id]; if (role && role.role === 'repo') { const i = railRepos().findIndex(r => r.path === role.repo); G.stack[0].cursor = G.d2.cursor = G.d3.cursor = Math.max(0, i); } }
+  log(`variant ${v}: ${VARIANTS[v].name}`);
+  render();
+}
+function cycle(dir) { setVariant(KEYS[(KEYS.indexOf(variant) + dir + KEYS.length) % KEYS.length]); }
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+document.getElementById('toggleInspector').onclick = e => {
+  const i = document.getElementById('inspector'); i.classList.toggle('hidden');
+  e.target.textContent = i.classList.contains('hidden') ? 'show inspector' : 'hide inspector';
+  render();
+};
+document.getElementById('newWs').onclick = () => {
+  const cwd = document.getElementById('newWsDir').value;
+  const name = cwd.split('/').pop();
+  const id = 'w' + (++S.wsSeq);
+  S.workspaces.push({ id, name, cwd, tabs: [{ title: name, panes: [{ kind: 'shell', cwd }], focus: 0, zoom: false }], activeTab: 0 });
+  log(`user ran Herdr's own "new workspace" at ${cwd}`);
+  S.activeWs = id;
+  herdrEvent('workspace.created', `(${name})`);
+  document.getElementById('herdr').focus();
+};
+document.getElementById('closeWs').onclick = () => {
+  const w = activeWs();
+  if (w.id === 'w1') { log('the root workspace stays in this mock'); render(); return; }
+  S.workspaces = S.workspaces.filter(x => x !== w);
+  delete S.wsTokens[w.id];
+  S.activeWs = 'w1';
+  log(`user closed workspace ${w.name} in Herdr`);
+  herdrEvent('workspace.closed', `(${w.name})`);
+  document.getElementById('herdr').focus();
+};
+document.getElementById('cdWs').onclick = () => {
+  const w = activeWs(), cwd = document.getElementById('cdDir').value;
+  w.cwd = cwd;
+  const root = w.tabs[0].panes[0];
+  if (root.kind === 'shell') root.cwd = cwd;
+  log(`user ran cd ${cwd} in ${w.name}'s root pane: Herdr's own branch/git_status follow at once; no hookable event → githerd unaware until the next trigger`);
+  render();
+  document.getElementById('herdr').focus();
+};
+document.getElementById('applyRoots').onclick = () => {
+  const lines = document.getElementById('rootsCfg').value.split('\n').map(x => x.trim().replace(/\/$/, '')).filter(Boolean);
+  S.rootsCfg = [...new Set(lines)];
+  S.rootsCfg.forEach(r => { if (!S.data[r]) S.data[r] = []; });
+  log(`roots file saved: ${S.rootsCfg.join(', ') || '(empty)'}`);
+  if (!S.rootsCfg.includes(S.view)) S.view = S.rootsCfg[0] || null;
+  resetNav(); G.filter = ''; fillDirSelects();
+  refresh('next githerd run (roots re-read)');
+  document.getElementById('herdr').focus();
+};
+document.getElementById('scenario').onchange = e => { S.scenario = e.target.value; S.data['~/work'] = tag('~/work', SCENARIOS[S.scenario]()); CACHE = {}; S.webBumped = false; S.fetching.clear(); resetNav(); fillDirSelects(); log(`scenario ${S.scenario}`); sync('scenario change'); render(); };
+document.getElementById('age').onclick = () => { Object.values(S.data).flat().forEach(r => { if (r.remote) r.fetched += 10; }); log('time passes: every FETCH_HEAD is 10 min older'); render(); };
+document.getElementById('ttl').onchange = e => { S.ttl = +e.target.value; render(); };
+document.querySelectorAll('[data-trigger]').forEach(b => b.onclick = () => {
+  const k = b.dataset.trigger;
+  if (k === 'agent') { S.agentDone = true; herdrEvent('pane.agent_status_changed', '(claude → done)'); setTimeout(() => { S.agentDone = false; render(); }, 8000); }
+  else if (k === 'startup') { S.wsTokens = {}; log('Herdr restarted: tokens are not restored'); refresh('[[startup]] hook'); }
+  else refresh('manual fetch', true);
+  document.getElementById('herdr').focus();
+});
+window.addEventListener('resize', () => { CELL = null; render(); });
+
+setInterval(() => {
+  let dirty = S.fetching.size > 0 || !S.agentDone || Object.values(S.flash).some(t => Date.now() - t < 1000);
+  if (githerdPane()) {
+    S.countdown--;
+    if (S.countdown <= 0) { S.countdown = 30; refresh('githerd pane timer (30 s)'); }
+    dirty = true;
+  }
+  if (dirty) render();
+}, 1000);
+setInterval(() => { if (S.fetching.size) render(); }, 120);
+
+fillDirSelects();
+document.getElementById('rootsCfg').value = S.rootsCfg.join('\n');
+log('session start');
+sync('[[startup]] hook');
+openGitherd('prefix g');
+document.getElementById('herdr').focus();
+</script>
+</body>
+</html>

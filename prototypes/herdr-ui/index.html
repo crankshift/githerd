@@ -1,0 +1,1081 @@
+<!doctype html>
+<!--
+  PROTOTYPE · throwaway · do not ship.
+  Question: what should the githerd UI inside Herdr look like?
+  Plan: four radically different variants (sidebar token + main surface), switchable via ?variant=A|B|C|D,
+  on one page that mocks a Herdr session. The Herdr chrome is an approximation; all data is fake.
+  Run: open prototypes/herdr-ui/index.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYPE · githerd in Herdr</title>
+<style>
+  :root {
+    --bg: #0e1014; --panel: #151922; --line: #272c37; --fg: #c8ced8; --dim: #6c7480; --mute: #454b57;
+    --yellow: #e5b567; --cyan: #7cc5d9; --mag: #c79bf0; --red: #f07178; --green: #9ccc7a; --blue: #82aaff;
+    --sel: #243049; --selfg: #e8edf5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #2b2e34; }
+  body { font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
+
+  /* ---------- prototype switcher (not part of the design) ---------- */
+  #switcher {
+    position: fixed; top: 10px; left: 12px; z-index: 100; display: flex; align-items: center; gap: 2px;
+    background: #111; color: #fff; border: 2px solid #ffd23f; border-radius: 999px; padding: 3px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45); font: 600 13px/1 ui-sans-serif, -apple-system, sans-serif; user-select: none;
+  }
+  #switcher button { background: none; border: 0; color: #ffd23f; font: inherit; font-size: 15px; padding: 6px 10px; cursor: pointer; border-radius: 999px; }
+  #switcher button:hover { background: #2a2a2a; }
+  #switcher .label { padding: 0 8px; min-width: 210px; text-align: center; }
+  #switcher .label small { color: #aaa; font-weight: 400; margin-left: 6px; }
+
+  #stage { display: flex; gap: 14px; padding: 54px 14px 14px; height: 100vh; }
+
+  /* ---------- mock terminal + Herdr ---------- */
+  #term { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 10px; overflow: hidden;
+          box-shadow: 0 20px 50px rgba(0,0,0,.5); background: var(--bg); }
+  .titlebar { height: 28px; flex: none; background: #1c1f26; display: flex; align-items: center; padding: 0 10px; gap: 7px; color: #8a909c; font-size: 12px; }
+  .titlebar i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .titlebar span { margin-left: 10px; }
+  #herdr { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; outline: none; overflow: hidden;
+           font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.45; color: var(--fg); }
+  #herdr:not(:focus) .cursor { opacity: .35; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  #sidebar { width: 34ch; flex: none; border-right: 1px solid var(--line); padding: 3px 0; overflow: hidden; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); flex: none; }
+  .tab { padding: 0 1.5ch; color: var(--dim); white-space: pre; }
+  .tab.on { color: var(--selfg); background: var(--sel); }
+  .panes { flex: 1; display: flex; min-height: 0; }
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 1px solid var(--line); margin: 2px; overflow: hidden; }
+  .pane.rail { flex: none; width: 40ch; }
+  .pane.focus { border-color: var(--blue); }
+  .ph { padding: 0 1ch; color: var(--dim); border-bottom: 1px solid var(--line); white-space: pre; flex: none; }
+  .pane.focus .ph { color: var(--blue); }
+  .pc { flex: 1; padding: 2px 1ch; overflow: hidden; }
+  .statusbar { flex: none; background: #181c24; color: var(--dim); white-space: pre; padding: 0 1ch; border-top: 1px solid var(--line); }
+  .ln { white-space: pre; min-height: 1.45em; }
+  .sel { background: var(--sel); color: var(--selfg); }
+  .overlay { position: absolute; inset: 0; background: rgba(4,5,8,.55); display: flex; align-items: center; justify-content: center; z-index: 5; }
+  .popup { position: relative; background: var(--panel); border: 1px solid var(--blue); padding: .9em 1ch .5em; max-width: 98%; overflow: visible;
+           box-shadow: 0 18px 50px rgba(0,0,0,.6); }
+  .ptitle { position: absolute; top: -.78em; left: 2ch; color: var(--blue); background: var(--panel); padding: 0 1ch; white-space: pre; }
+  .flash { animation: flash .9s ease-out; }
+  @keyframes flash { from { background: #5a4a1e; } to { background: transparent; } }
+
+  .dim { color: var(--dim); } .mute { color: var(--mute); } .b { font-weight: 700; } .it { font-style: italic; }
+  .yellow { color: var(--yellow); } .cyan { color: var(--cyan); } .mag { color: var(--mag); } .red { color: var(--red); }
+  .green { color: var(--green); } .blue { color: var(--blue); } .fg { color: var(--selfg); }
+  .tk-bg { background: #2c2a1c; } .cursor { background: var(--fg); color: var(--bg); }
+
+  /* ---------- inspector (not part of the design) ---------- */
+  #inspector { width: 430px; flex: none; overflow-y: auto; background: #f3f0e8; color: #222; border-radius: 10px; padding: 14px 16px 30px; font-size: 13px; line-height: 1.45; }
+  #inspector.hidden { display: none; }
+  #inspector h2 { font-size: 15px; margin: 0 0 4px; }
+  #inspector h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #8a6d1e; margin: 18px 0 6px; }
+  #inspector p { margin: 4px 0; }
+  #inspector ul { margin: 4px 0; padding-left: 18px; }
+  #inspector pre { background: #1d1f24; color: #d8dde6; padding: 8px 10px; border-radius: 6px; overflow-x: auto; font: 11.5px/1.45 "JetBrains Mono", "SF Mono", Menlo, monospace; margin: 4px 0; white-space: pre; }
+  #inspector .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+  #inspector button { font: inherit; font-size: 12px; padding: 4px 9px; border: 1px solid #bbb2a0; background: #fff; border-radius: 6px; cursor: pointer; }
+  #inspector button:hover { background: #fff8e0; }
+  #inspector select { font: inherit; font-size: 12px; padding: 2px 4px; }
+  #inspector label { font-size: 12px; }
+  #inspector .note { color: #6b6250; font-size: 12px; }
+  #inspector details summary { cursor: pointer; font-weight: 600; font-size: 12px; margin-top: 6px; }
+  #toggleInspector { position: fixed; top: 12px; right: 14px; z-index: 100; font: 12px ui-sans-serif, sans-serif; padding: 6px 10px; border-radius: 6px; border: 0; background: #111; color: #ffd23f; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="switcher" title="Prototype switcher · ← / → keys also cycle">
+  <button id="prev" aria-label="Previous variant">◀</button>
+  <div class="label" id="vlabel"></div>
+  <button id="next" aria-label="Next variant">▶</button>
+</div>
+<button id="toggleInspector">hide inspector</button>
+
+<div id="stage">
+  <section id="term">
+    <div class="titlebar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>herdr — ~/work</span></div>
+    <div id="herdr" tabindex="0">
+      <div class="body">
+        <div id="sidebar"></div>
+        <div id="main"></div>
+      </div>
+      <div class="statusbar" id="statusbar"></div>
+      <div id="overlay"></div>
+    </div>
+  </section>
+
+  <aside id="inspector">
+    <h2 id="iTitle"></h2>
+    <p id="iIdea"></p>
+    <h3>This variant asks</h3>
+    <ul id="iProbes"></ul>
+
+    <h3>How to drive it</h3>
+    <p class="note">Click the terminal, then press <b>g</b> (stands for <code>prefix g</code>, bound to the plugin action). Keys for the open UI are on its bottom line. <b>←/→</b> switch variants. In the main area: <b>o</b> next pane, <b>x</b> close pane, <b>1–9</b> tabs.</p>
+
+    <h3>Scenario</h3>
+    <div class="row">
+      <select id="scenario">
+        <option value="typical">Typical: 14 repos, 7 need attention</option>
+        <option value="clean">All clean</option>
+        <option value="big">Big root: 60 repos</option>
+        <option value="offline">Offline: every fetch fails</option>
+      </select>
+      <button id="age">+10 min</button>
+    </div>
+    <p class="note">"+10 min" ages every <code>FETCH_HEAD</code>, so the fetch TTL kicks in on the next refresh.</p>
+
+    <h3>Mix and match</h3>
+    <div class="row">
+      <label>Token style
+        <select id="tokenStyle">
+          <option value="auto">variant default</option>
+          <option value="count">count: 7/14</option>
+          <option value="glyph">glyph: ◆7</option>
+          <option value="words">words: 7 need attention</option>
+          <option value="breakdown">breakdown: ●4 ⇡3 ⇣3 ∅2</option>
+        </select>
+      </label>
+      <label>When all clean
+        <select id="zero">
+          <option value="check">show ✓</option>
+          <option value="hide">hide token</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="paneTokens" checked> pane tokens on agent rows (<code>herdr pane report-metadata</code>)</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="tabbar"> tab-bar segment (<code>tab_bar_right</code> command, every 60 s, plain text)</label>
+    </div>
+    <div class="row">
+      <label>Fetch TTL
+        <select id="ttl">
+          <option value="5">5 min</option>
+          <option value="15" selected>15 min</option>
+          <option value="60">60 min</option>
+        </select>
+      </label>
+    </div>
+
+    <h3>Refresh triggers</h3>
+    <div class="row">
+      <button data-trigger="keypress">prefix g (action)</button>
+      <button data-trigger="agent-stop">pane.agent_status_changed → done</button>
+      <button data-trigger="event">workspace.focused</button>
+      <button data-trigger="startup">[[startup]] after restore</button>
+      <button data-trigger="tabbar">tab_bar_right tick</button>
+      <button data-trigger="fetch">fetch now</button>
+    </div>
+    <p class="note">Each trigger runs one refresh: local status, a fetch for repos whose <code>FETCH_HEAD</code> is older than the TTL, then a report to Herdr. Herdr has no plugin timers; the only periodic thing is a <code>tab_bar_right</code> command entry in the user's config, which also prints a plain-text segment in the tab bar.</p>
+
+    <h3>Last reports to Herdr</h3>
+    <pre id="iReports"></pre>
+
+    <h3>Event log</h3>
+    <pre id="iLog" style="max-height:180px"></pre>
+
+    <h3>Your config.toml + plugin manifest (sketch)</h3>
+    <pre id="iConfig"></pre>
+    <p class="note">Exact keys still need checking against the Herdr docs; this shows how much the user must paste.</p>
+
+    <h3>Same data from the CLI</h3>
+    <pre id="iCli"></pre>
+    <details><summary>githerd status --json</summary><pre id="iJson"></pre></details>
+  </aside>
+</div>
+
+<script>
+'use strict';
+
+/* ================= variants ================= */
+const VARIANTS = {
+  A: {
+    name: 'Table popup', token: 'count', action: 'open',
+    idea: 'One modal popup with a dense table of every repo, attention first. The sidebar token is a bare count. Bet: a spreadsheet is the fastest read.',
+    probes: [
+      'Are seven columns too many for a popup? Which would you drop?',
+      'Show clean repos by default (c toggles), or hide them?',
+      'Enter = split, t = tab, l = lazygit: are those the right defaults?',
+      'Is "7/14" readable in a 34-column sidebar? (Herdr joins tokens with " · ".)',
+      'Sidebar rules can\'t do gt on "7/14": colour comes from starts_with on a prefix the reporter picks. OK?',
+    ],
+  },
+  B: {
+    name: 'Triage board', token: 'breakdown', action: 'open',
+    idea: 'Popup grouped by what you have to do: commit, push, pull. A repo shows up in every group it belongs to. The token breaks the count down by state.',
+    probes: [
+      'Is a repo listed in several groups helpful, or noise?',
+      'Should githerd ever pull or push for you? (p / P are stubs here.)',
+      'Do ⇡ ⇣ in the token clash with the built-in git_status (↑ green / ↓ red) of the root?',
+      'Detached, stale and clean start folded: right call?',
+    ],
+  },
+  C: {
+    name: 'Picker + preview', token: 'glyph', action: 'pick',
+    idea: 'Search-first: type to filter, the right side previews changed files and the commits to push or pull. Built for jumping into a repo, not for reading a report.',
+    probes: [
+      'Is the preview worth one extra git call per selected repo?',
+      'Open as a new Herdr workspace (^w) instead of a split? Then the built-in branch / git_status tokens cover that repo for free.',
+      'Is a glyph-only token (◆7) enough, given the picker is one key away?',
+    ],
+  },
+  D: {
+    name: 'Docked live rail', token: 'words', action: 'focus',
+    idea: 'No popup: a narrow split pane stays open and refreshes itself every 30 s, side-stepping Herdr\'s lack of timers. The sidebar token mirrors it.',
+    probes: [
+      'Is a permanent pane worth the screen? plugin pane open has no --ratio, so a plugin split opens at 50%; a narrow rail needs pane split --ratio + pane run instead.',
+      'Who refreshes the token when the rail is closed (hooks only)?',
+      '30 s local refresh plus fetch TTL: right cadence?',
+      'Does prefix g focusing the rail (instead of opening something) feel right?',
+      'Or drop the rail and use the tab_bar_right toggle as the timer + always-visible segment?',
+    ],
+  },
+};
+const KEYS = Object.keys(VARIANTS);
+let variant = new URLSearchParams(location.search).get('variant');
+if (!VARIANTS[variant]) variant = 'A';
+
+/* ================= fake data ================= */
+function R(path, branch, upstream, ahead, behind, files, aheadLog, behindLog, fetched, extra = {}) {
+  return { path, branch, upstream, ahead, behind, files, aheadLog, behindLog, fetched, remote: fetched !== null, detached: null, stale: null, ...extra };
+}
+const SEARCH_FILES = ['src/rank.ts', 'src/index.ts', 'src/query.ts', 'src/tokens.ts', 'test/rank.test.ts', 'test/query.test.ts', 'README.md', 'package.json', 'src/synonyms.json', 'src/stopwords.txt', 'bench/run.ts', 'bench/data.csv']
+  .map((f, i) => [i < 9 ? ' M' : '??', f]);
+
+function typical() {
+  return [
+    R('.', 'main', 'origin/main', 0, 0, [['??', 'TODO.md']], [], [], 4),
+    R('repos/acme/api', 'feature/login', 'origin/feature/login', 2, 0,
+      [[' M', 'src/auth.ts'], [' M', 'src/routes.ts'], ['??', 'src/auth.test.ts']],
+      [['3f2a9c1', 'Add session refresh endpoint'], ['b81e0d4', 'Validate login payload']], [], 4),
+    R('repos/acme/api/vendor/sdk', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/billing', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/docs', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/infra', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/acme/mobile', 'release/2.3', 'origin/release/2.3', 1, 2, [],
+      [['c0ffee1', 'Hotfix crash on resume']],
+      [['d15ea5e', 'Release notes 2.3.1'], ['5eed5ed', 'Bump build number']], 4),
+    R('repos/acme/search', 'main', 'origin/main', 0, 1, SEARCH_FILES.slice(), [], [['8badf00', 'Tune ranking weights']], 4),
+    R('repos/acme/web', 'main', 'origin/main', 0, 4, [], [],
+      [['9c0d1e2', 'Bump design tokens'], ['77a1f3b', 'Fix footer links'], ['e4b2c90', 'Add pricing page'], ['1a2b3c4', 'Upgrade bundler']], 4),
+    R('repos/oss/fastqueue', 'main', 'upstream/main', 0, 0, [], [], [], 190, { stale: 'Permission denied (publickey)' }),
+    R('repos/oss/kvstore', 'main', 'origin/main', 0, 0, [], [], [], 4),
+    R('repos/tools/cli', 'spike/parser', null, 3, 0, [],
+      [['aa11bb2', 'WIP tokenizer'], ['cc33dd4', 'Parse flags'], ['ee55ff6', 'Spike: AST printer']], [], 4),
+    R('repos/tools/lint-rules', null, null, 0, 0, [], [], [], 4, { detached: 'v1.4.0' }),
+    R('sandbox/experiments', 'main', null, 0, 0, [[' M', 'notes.md']], [], [], null),
+  ];
+}
+function cleanSet() {
+  return typical().map(r => ({ ...r, files: [], ahead: 0, behind: 0, aheadLog: [], behindLog: [], stale: null,
+    upstream: r.detached ? null : (r.upstream || 'origin/' + r.branch), remote: true, fetched: 4 }));
+}
+function bigSet() {
+  const names = ['auth', 'gateway', 'ledger', 'notify', 'catalog', 'orders', 'pricing', 'reports', 'queue', 'metrics', 'profile', 'media', 'assets', 'checkout', 'sessions', 'webhooks'];
+  const groups = ['acme', 'labs', 'oss'];
+  const out = typical();
+  let k = 0;
+  for (const g of groups) for (const n of names) {
+    if (out.length >= 60) break;
+    const p = `repos/${g}/${n}`;
+    if (out.some(r => r.path === p)) continue;
+    k++;
+    const files = k % 9 === 0 ? [[' M', 'src/main.go']] : [];
+    const behind = k % 13 === 0 ? 2 : 0;
+    out.push(R(p, 'main', 'origin/main', 0, behind, files, [], behind ? [['f00d' + k, 'Upstream change'], ['beef' + k, 'Upstream fix']] : [], 4));
+  }
+  return out;
+}
+const SCENARIOS = { typical, clean: cleanSet, big: bigSet, offline: () => typical().map(r => ({ ...r, fetched: r.remote ? 30 : null })) };
+
+function derive(r) {
+  const unc = r.files.length;
+  const noUp = !r.detached && !r.upstream;
+  const att = unc > 0 || r.ahead > 0 || r.behind > 0 || noUp;
+  return { ...r, unc, noUp, att };
+}
+function summary() {
+  const rs = S.repos.map(derive);
+  const remotes = rs.filter(r => r.remote && !r.stale);
+  return {
+    total: rs.length,
+    att: rs.filter(r => r.att).length,
+    unc: rs.filter(r => r.unc).length,
+    ahead: rs.filter(r => r.ahead).length,
+    behind: rs.filter(r => r.behind).length,
+    noUp: rs.filter(r => r.noUp).length,
+    stale: rs.filter(r => r.stale).length,
+    oldest: remotes.length ? Math.max(...remotes.map(r => r.fetched)) : 0,
+  };
+}
+
+/* ================= state ================= */
+const S = {
+  scenario: 'typical', repos: typical(), tokenStyle: 'auto', zero: 'check', paneTokens: true, ttl: 15,
+  ui: null, tabs: null, activeTab: 0, extraWorkspaces: [],
+  seq: 0, reports: [], log: [], fetching: new Set(), webBumped: false, flash: false,
+  rail: { countdown: 30, cursor: 0, offset: 0, focused: false },
+  agentState: 'working',
+  tabbar: { on: false, countdown: 60 },
+};
+function freshUi() {
+  return { open: false, cursor: 0, offset: 0, filter: '', filtering: false, sort: 'attention', showClean: true,
+           collapsed: { detached: true, stale: true, clean: true }, msg: '' };
+}
+function freshTabs() {
+  const panes = [{ kind: 'agent' }];
+  if (variant === 'D') panes.push({ kind: 'rail' });
+  return [{ title: 'agents', panes, focus: 0 }];
+}
+function resetUi() { S.ui = freshUi(); S.tabs = freshTabs(); S.activeTab = 0; S.rail.focused = false; S.rail.cursor = 0; S.rail.offset = 0; S.extraWorkspaces = []; }
+resetUi();
+
+/* ================= text helpers ================= */
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const pad = (s, n) => { s = String(s); return s.length > n ? s.slice(0, Math.max(0, n - 1)) + '…' : s + ' '.repeat(n - s.length); };
+const padL = (s, n) => { s = String(s); return s.length >= n ? s.slice(0, n) : ' '.repeat(n - s.length) + s; };
+const truncL = (s, n) => { s = String(s); return s.length <= n ? s : '…' + s.slice(s.length - n + 1); };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const segLen = a => a.reduce((n, [t]) => n + String(t).length, 0);
+const segHtml = a => a.map(([t, cls]) => cls ? `<span class="${cls}">${esc(t)}</span>` : esc(t)).join('');
+function fit(a, W) {
+  const out = []; let n = 0;
+  for (const [t0, cls] of a) {
+    if (n >= W) break;
+    let t = String(t0);
+    if (n + t.length > W) t = t.slice(0, W - n - 1) + '…';
+    out.push([t, cls]); n += t.length;
+  }
+  if (n < W) out.push([' '.repeat(W - n)]);
+  return out;
+}
+const line = (a, cls = '') => `<div class="ln ${cls}">${segHtml(a)}</div>`;
+function lineLR(left, right, W, cls = '') {
+  const gap = Math.max(1, W - segLen(left) - segLen(right));
+  return `<div class="ln ${cls}">${segHtml(left)}${' '.repeat(gap)}${segHtml(right)}</div>`;
+}
+function fuzzy(q, s) { q = q.toLowerCase(); s = s.toLowerCase(); let i = 0; for (const ch of s) if (ch === q[i]) i++; return i === q.length; }
+function short(path) { return path === '.' ? 'work' : path.split('/').slice(-1)[0]; }
+function glyphSegs(r, skip = '') {
+  const a = [];
+  if (r.unc && skip !== 'uncommitted') a.push(['●' + r.unc, 'yellow']);
+  if (r.noUp && skip !== 'noup') a.push(['∅', 'red']);
+  if (r.ahead && skip !== 'ahead') a.push(['⇡' + r.ahead, 'cyan']);
+  if (r.behind && skip !== 'behind') a.push(['⇣' + r.behind, 'mag']);
+  if (r.detached && skip !== 'detached') a.push(['⌀' + r.detached, 'dim']);
+  if (r.stale && skip !== 'stale') a.push(['⚠', 'red']);
+  const out = [];
+  a.forEach((g, i) => { if (i) out.push([' ']); out.push(g); });
+  return out;
+}
+const spinner = () => '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[Math.floor(Date.now() / 90) % 10];
+
+/* ================= tokens + reporting ================= */
+function tokenStyle() { return S.tokenStyle === 'auto' ? VARIANTS[variant].token : S.tokenStyle; }
+function tokens() {
+  const d = summary();
+  const style = tokenStyle();
+  let list = [];
+  if (d.att === 0) {
+    if (S.zero === 'check') list = [['repos', style === 'words' ? 'all clean' : style === 'count' ? `✓${d.total}` : '✓', 'green']];
+  } else if (style === 'count') list = [['repos', `${d.att}/${d.total}`, 'yellow']];
+  else if (style === 'glyph') list = [['repos', `◆${d.att}`, 'yellow b']];
+  else if (style === 'words') list = [['repos', `${d.att} need attention`, 'yellow']];
+  else {
+    if (d.unc) list.push(['uncommitted', `●${d.unc}`, 'yellow']);
+    if (d.ahead) list.push(['ahead', `⇡${d.ahead}`, 'cyan']);
+    if (d.behind) list.push(['behind', `⇣${d.behind}`, 'mag']);
+    if (d.noUp) list.push(['no_upstream', `∅${d.noUp}`, 'red']);
+  }
+  if (d.stale) list.push(['stale', `⚠${d.stale}`, 'red']);
+  return list;
+}
+const ALL_TOKENS = ['repos', 'uncommitted', 'ahead', 'behind', 'no_upstream', 'stale'];
+function paneToken(path) {
+  const r = S.repos.find(x => x.path === path); if (!r) return null;
+  const d = derive(r);
+  const g = glyphSegs(d);
+  return [[short(path) + ' ', 'dim'], ...(g.length ? g : [['✓', 'green']])];
+}
+function report(trigger) {
+  S.seq++;
+  const list = tokens();
+  const set = list.map(([k, v]) => `--token ${k}=${JSON.stringify(v)}`);
+  const clear = ALL_TOKENS.filter(k => !list.some(([n]) => n === k)).map(k => `--clear-token ${k}`);
+  const cmds = [`# ${trigger}\n# context: workspace_cwd=~/work/repos/acme/api (focused pane) → root ~/work\n$HERDR_BIN_PATH workspace report-metadata "$HERDR_WORKSPACE_ID" \\\n  --source githerd --seq ${S.seq} \\\n  ${[...set, ...clear].join(' \\\n  ')}`];
+  if (S.paneTokens) {
+    for (const a of AGENTS) {
+      const t = paneToken(a.cwd);
+      cmds.push(`$HERDR_BIN_PATH pane report-metadata ${a.pane} --source githerd --seq ${S.seq} --token repo=${JSON.stringify(segLen(t) ? t.map(x => x[0]).join('') : '')}`);
+    }
+  }
+  S.reports.unshift(cmds.join('\n'));
+  S.reports = S.reports.slice(0, 3);
+  S.flash = true;
+  setTimeout(() => { S.flash = false; }, 50);
+}
+function log(msg) {
+  const t = new Date().toTimeString().slice(0, 8);
+  S.log.unshift(`${t}  ${msg}`);
+  S.log = S.log.slice(0, 40);
+}
+
+/* ================= refresh + fetch ================= */
+function refresh(trigger, forceFetch = false) {
+  const due = S.repos.filter(r => r.remote && (forceFetch || r.fetched >= S.ttl || r.stale));
+  if (due.length) {
+    log(`${trigger}: ${due.length} repo(s) with FETCH_HEAD ≥ ${S.ttl}m${forceFetch ? ' (forced)' : ''} → fetch`);
+    fetchRepos(due, trigger);
+  } else {
+    log(`${trigger}: every FETCH_HEAD < ${S.ttl}m → local status only`);
+    report(trigger);
+  }
+  render();
+}
+function fetchRepos(list, trigger) {
+  const todo = list.filter(r => !S.fetching.has(r.path));
+  if (!todo.length) return;
+  todo.forEach(r => S.fetching.add(r.path));
+  S.ui.msg = `fetching ${todo.length} repo(s)…`;
+  let fresh = 0, failed = 0;
+  todo.forEach((r, i) => setTimeout(() => {
+    S.fetching.delete(r.path);
+    if (S.scenario === 'offline') { r.stale = 'Could not resolve host: git.example.com'; failed++; }
+    else if (r.path === 'repos/oss/fastqueue' && S.scenario !== 'clean') { r.stale = 'Permission denied (publickey)'; failed++; }
+    else {
+      r.stale = null; r.fetched = 0;
+      if (r.path === 'repos/acme/web' && !S.webBumped && S.scenario !== 'clean') {
+        S.webBumped = true; r.behind += 1; r.behindLog.unshift(['0ddba11', 'Add cookie banner']); fresh++;
+      }
+    }
+    if (S.fetching.size === 0) {
+      S.ui.msg = `fetched ${todo.length - failed}/${todo.length}` + (fresh ? ` · ${fresh} repo got new commits` : '') + (failed ? ` · ${failed} failed (stale)` : '');
+      log(`fetch done: ${todo.length - failed} ok, ${failed} failed`);
+      report(trigger + ' (after fetch)');
+    }
+    render();
+  }, 300 + i * 70 + (i % 3) * 120));
+}
+
+/* ================= sidebar ================= */
+const AGENTS = [
+  { name: 'claude', pane: 'p1', cwd: 'repos/acme/api' },
+  { name: 'codex', pane: 'p2', cwd: 'repos/acme/web', state: 'done' },
+  { name: 'shell', pane: 'p3', cwd: '.', state: 'idle' },
+];
+const STATE_ICON = { working: ['◐', 'yellow'], done: ['●', 'green'], idle: ['○', 'dim'], waiting: ['◍', 'red'] };
+function gitStatus(r) {
+  // Herdr built-in git_status: ↑N green, ↓M red, nonzero parts only, hidden at 0/0
+  const g = [];
+  if (r && r.ahead) g.push(['↑' + r.ahead, 'green']);
+  if (r && r.behind) g.push([(g.length ? ' ' : '') + '↓' + r.behind, 'red']);
+  return g;
+}
+function renderSidebar() {
+  const W = 33, L = [];
+  L.push(line([[' SPACES', 'dim']]));
+  const tk = tokens();
+  const tkSegs = [];
+  tk.forEach(([, v, cls], i) => { if (i) tkSegs.push([' · ', 'mute']); tkSegs.push([v, cls]); });
+  const spaces = [
+    { name: 'work', icon: STATE_ICON[S.agentState], branch: 'main', git: gitStatus(S.repos.find(r => r.path === '.')), githerd: true, on: true },
+    { name: 'blog', icon: STATE_ICON.idle, branch: 'draft/notes', git: [['↑1', 'green']] },
+    { name: 'infra-lab', icon: STATE_ICON.done, branch: 'main', git: [['↓2', 'red']] },
+    ...S.extraWorkspaces.map(w => ({ name: w.name, icon: STATE_ICON.idle, branch: w.branch, git: w.git, isNew: true })),
+  ];
+  for (const s of spaces) {
+    L.push(line(fit([[s.on ? '▌' : ' ', 'blue'], [s.icon[0], s.icon[1]], [' '], [s.name, s.on ? 'fg b' : ''], ...(s.isNew ? [['  new', 'green']] : [])], W), s.on ? 'sel' : ''));
+    const row2 = [['   '], [s.branch, 'dim']];
+    if (s.git.length) row2.push([' · ', 'mute'], ...s.git);
+    if (s.githerd && tkSegs.length) row2.push([' · ', 'mute'], ...tkSegs);
+    L.push(line(fit(row2, W), (s.githerd && S.flash ? 'flash ' : '') + (s.on ? 'sel' : '')));
+  }
+  L.push(line([['']]));
+  L.push(line([[' AGENTS · work', 'dim']]));
+  AGENTS.forEach((a, i) => {
+    const st = i === 0 ? S.agentState : a.state;
+    const ic = STATE_ICON[st];
+    L.push(line(fit([['  '], [ic[0], ic[1]], [' '], [a.name], [' · ', 'mute'], [st, 'dim']], W)));
+    if (S.paneTokens) L.push(line(fit([['    '], ...paneToken(a.cwd)], W)));
+  });
+  document.getElementById('sidebar').innerHTML = L.join('');
+}
+
+/* ================= main area ================= */
+function curTab() { return S.tabs[S.activeTab]; }
+function shellLines(path, kind) {
+  const r = derive(S.repos.find(x => x.path === path));
+  const cwd = `~/work${path === '.' ? '' : '/' + path}`;
+  if (kind === 'lazygit') {
+    return [
+      line([['lazygit', 'green b'], ['  (launched because it is on PATH)', 'dim']]),
+      line([['cwd ', 'dim'], [cwd]]),
+      line([['']]),
+      line([['[the lazygit UI would run here]', 'dim it']]),
+      line([['']]),
+      line([['q to quit lazygit · x closes this pane', 'dim']]),
+    ];
+  }
+  const head = r.detached ? `HEAD (detached at ${r.detached})` : r.branch + (r.upstream ? '...' + r.upstream : '');
+  const tr = [r.ahead ? `ahead ${r.ahead}` : '', r.behind ? `behind ${r.behind}` : ''].filter(Boolean).join(', ');
+  const L = [
+    line([[cwd, 'blue'], [' '], [r.branch || r.detached, 'mag'], [r.unc ? '*' : '', 'yellow'], [' ❯ ', 'green'], ['git status -sb']]),
+    line([['## ' + head + (tr ? ` [${tr}]` : ''), 'green']]),
+    ...r.files.slice(0, 8).map(([st, f]) => line([[st, st === '??' ? 'red' : 'yellow'], [' ' + f]])),
+  ];
+  if (r.files.length > 8) L.push(line([[`… ${r.files.length - 8} more`, 'dim']]));
+  L.push(line([[cwd, 'blue'], [' '], [r.branch || r.detached, 'mag'], [r.unc ? '*' : '', 'yellow'], [' ❯ ', 'green'], [' ', 'cursor']]));
+  return L;
+}
+function agentLines() {
+  const done = S.agentState === 'done';
+  return [
+    line([['> ', 'blue'], ['add a session refresh endpoint and tests']]),
+    line([['']]),
+    line([['• ', 'dim'], ['Reading src/auth.ts']]),
+    line([['• ', 'dim'], ['Editing src/routes.ts']]),
+    line([['• ', 'dim'], ['Writing src/auth.test.ts']]),
+    done ? line([['✓ ', 'green'], ['3 files changed · tests: 12 passed · not committed']]) : line([[spinner() + ' ', 'yellow'], ['running tests…', 'dim']]),
+    line([['']]),
+    line([['> ', 'blue'], [' ', 'cursor']]),
+  ];
+}
+function renderMain() {
+  let tabs = S.tabs.map((t, i) => `<div class="tab ${i === S.activeTab ? 'on' : ''}">${i + 1}:${esc(t.title)}</div>`).join('');
+  if (S.tabbar.on) {
+    const d = summary();
+    const txt = d.att ? `githerd ${d.att}/${d.total}${d.stale ? ' ⚠' + d.stale : ''}` : 'githerd ✓';
+    tabs += `<div class="tab" style="margin-left:auto">${esc(txt)}  <span class="mute">↻${S.tabbar.countdown}s</span></div>`;
+  }
+  const t = curTab();
+  const panes = t.panes.map((p, i) => {
+    const focus = i === t.focus && !S.ui.open;
+    let title, body;
+    if (p.kind === 'agent') { title = 'claude · ~/work/repos/acme/api'; body = agentLines().join(''); }
+    else if (p.kind === 'rail') { title = 'githerd'; body = railLines().join(''); }
+    else { title = `${p.kind === 'lazygit' ? 'lazygit' : 'shell'} · ${short(p.repo)}`; body = shellLines(p.repo, p.kind).join(''); }
+    return `<div class="pane ${p.kind === 'rail' ? 'rail' : ''} ${focus ? 'focus' : ''}"><div class="ph">${esc(title)}</div><div class="pc">${body}</div></div>`;
+  }).join('');
+  document.getElementById('main').innerHTML = `<div class="tabs">${tabs}</div><div class="panes">${panes}</div>`;
+  const hint = variant === 'D' ? 'g focus githerd rail' : 'g githerd';
+  document.getElementById('statusbar').innerHTML = esc(` work │ prefix ctrl-b │ ${hint} │ o next pane │ x close pane │ 1-9 tab`);
+}
+
+/* ================= shared list logic ================= */
+const SORTS = {
+  attention: (a, b) => (b.att - a.att) || a.path.localeCompare(b.path),
+  path: (a, b) => a.path.localeCompare(b.path),
+  behind: (a, b) => (b.behind - a.behind) || (b.ahead - a.ahead) || a.path.localeCompare(b.path),
+};
+function visibleRepos() {
+  let rs = S.repos.map(derive);
+  if (!S.ui.showClean) rs = rs.filter(r => r.att || r.stale);
+  if (S.ui.filter) rs = rs.filter(r => fuzzy(S.ui.filter, r.path));
+  return rs.sort(SORTS[S.ui.sort]);
+}
+function scrollTo(n, vis) {
+  const u = S.ui;
+  u.cursor = Math.max(0, Math.min(u.cursor, n - 1));
+  if (u.cursor < u.offset) u.offset = u.cursor;
+  if (u.cursor >= u.offset + vis) u.offset = u.cursor - vis + 1;
+  u.offset = Math.max(0, Math.min(u.offset, Math.max(0, n - vis)));
+}
+function headerSegs(d) {
+  const a = [[` ${d.total} repos · `], [`${d.att} need attention`, d.att ? 'yellow' : 'green']];
+  if (d.stale) a.push([' · '], [`${d.stale} stale`, 'red']);
+  a.push([' · '], [S.fetching.size ? `${spinner()} fetching ${S.fetching.size}` : `fetched ${d.oldest}m ago`, S.fetching.size ? 'cyan' : 'dim'], [` (TTL ${S.ttl}m)`, 'dim']);
+  return a;
+}
+const num = (n, cls) => n ? [String(n), cls] : ['·', 'mute'];
+
+/* ================= variant A: table popup ================= */
+function popupA() {
+  const W = 108, VIS = 18;
+  const rs = visibleRepos(); scrollTo(rs.length, VIS);
+  const d = summary(), u = S.ui, L = [];
+  L.push(lineLR(headerSegs(d), [['sort: ', 'dim'], [u.sort], [' · clean: ', 'dim'], [u.showClean ? 'shown' : 'hidden'], [' ']], W));
+  L.push(line(u.filtering || u.filter ? [[' filter /', 'blue'], [u.filter], [u.filtering ? ' ' : '', 'cursor']] : [['']]));
+  L.push(line([['   ' + pad('REPO', 28) + pad('BRANCH', 16) + padL('UNCOMMITTED', 12) + padL('AHEAD', 7) + padL('BEHIND', 8) + '  ' + pad('UPSTREAM', 22) + 'NOTE', 'dim']]));
+  rs.slice(u.offset, u.offset + VIS).forEach((r, i) => {
+    const sel = u.offset + i === u.cursor;
+    const fetching = S.fetching.has(r.path);
+    const segs = [
+      [sel ? '▌' : ' ', 'blue'], [r.att ? '●' : ' ', 'yellow'], [' '],
+      [pad(truncL(r.path, 27), 28), r.att ? 'fg' : ''],
+      [pad(r.detached ? `(${r.detached})` : r.branch, 16), r.detached ? 'dim it' : 'mag'],
+      [padL(r.unc || '·', 12), r.unc ? 'yellow' : 'mute'],
+      [padL(r.ahead || '·', 7), r.ahead ? 'cyan' : 'mute'],
+      [padL(fetching ? spinner() : (r.behind || '·'), 8), fetching ? 'cyan' : r.behind ? 'mag' : 'mute'],
+      ['  '],
+      [pad(r.detached ? 'detached' : r.upstream || 'none', 22), r.noUp ? 'red' : 'dim'],
+    ];
+    if (r.stale) segs.push(['⚠ stale', 'red']);
+    else if (r.noUp && !r.remote) segs.push(['no remote', 'dim']);
+    else if (r.ahead && r.behind) segs.push(['diverged', 'yellow']);
+    L.push(line(fit(segs, W), sel ? 'sel' : ''));
+  });
+  for (let i = Math.min(VIS, rs.length - u.offset); i < VIS; i++) L.push(line([[i === 0 && !rs.length ? '   no repos match' : '', 'dim']]));
+  L.push(lineLR([[rs.length > VIS ? ` ${u.offset + 1}–${Math.min(rs.length, u.offset + VIS)} of ${rs.length}` : '', 'dim']], [[u.msg, 'cyan'], [' ']], W));
+  L.push(line(fit([[' enter', 'blue'], [' split  '], ['t', 'blue'], [' tab  '], ['l', 'blue'], [' lazygit  '], ['f', 'blue'], [' fetch  '], ['c', 'blue'], [' clean  '], ['s', 'blue'], [' sort  '], ['/', 'blue'], [' filter  '], ['j/k', 'blue'], [' move  '], ['q', 'blue'], [' close']], W)));
+  return popupBox(' githerd · ~/work ', L, W);
+}
+function keysA(e) {
+  const u = S.ui, rs = visibleRepos(), r = rs[u.cursor];
+  if (u.filtering) return filterKey(e);
+  switch (e.key) {
+    case 'j': case 'ArrowDown': u.cursor++; break;
+    case 'k': case 'ArrowUp': u.cursor--; break;
+    case 'g': u.cursor = 0; break;
+    case 'G': u.cursor = rs.length - 1; break;
+    case 'Enter': if (r) openRepo(r, 'split'); return;
+    case 't': if (r) openRepo(r, 'tab'); return;
+    case 'l': if (r) openRepo(r, 'lazygit'); return;
+    case 'f': refresh('popup f', true); return;
+    case 'c': u.showClean = !u.showClean; u.cursor = 0; break;
+    case 's': u.sort = { attention: 'path', path: 'behind', behind: 'attention' }[u.sort]; break;
+    case '/': u.filtering = true; break;
+    case 'q': case 'Escape': closePopup(); return;
+    default: return false;
+  }
+  render();
+}
+function filterKey(e) {
+  const u = S.ui;
+  if (e.key === 'Escape') { u.filtering = false; u.filter = ''; }
+  else if (e.key === 'Enter') u.filtering = false;
+  else if (e.key === 'Backspace') u.filter = u.filter.slice(0, -1);
+  else if (e.key.length === 1 && !e.ctrlKey) u.filter += e.key;
+  else return false;
+  u.cursor = 0; render();
+}
+
+/* ================= variant B: triage board ================= */
+const GROUPS = [
+  { id: 'uncommitted', title: 'UNCOMMITTED', cls: 'yellow', test: r => r.unc > 0, detail: r => plural(r.unc, 'file') },
+  { id: 'ahead', title: 'TO PUSH', cls: 'cyan', test: r => r.ahead > 0, detail: r => plural(r.ahead, r.noUp ? 'local commit' : 'commit') + (r.behind ? ' · diverged' : '') },
+  { id: 'behind', title: 'TO PULL', cls: 'mag', test: r => r.behind > 0, detail: r => plural(r.behind, 'commit') + (r.ahead ? ' · diverged' : '') },
+  { id: 'noup', title: 'NO UPSTREAM', cls: 'red', test: r => r.noUp, detail: r => r.branch + (r.remote ? '' : ' · no remote') },
+  { id: 'detached', title: 'DETACHED', cls: 'dim', test: r => !!r.detached, detail: r => 'at ' + r.detached },
+  { id: 'stale', title: 'STALE', cls: 'red', test: r => !!r.stale, detail: r => 'fetch failed: ' + r.stale },
+  { id: 'clean', title: 'CLEAN', cls: 'green', test: r => !r.att, detail: r => r.detached ? 'detached' : r.branch },
+];
+function itemsB() {
+  const rs = S.repos.map(derive).sort(SORTS.path), items = [];
+  for (const g of GROUPS) {
+    const members = rs.filter(g.test);
+    if (!members.length) continue;
+    items.push({ t: 'h', g, n: members.length });
+    if (!S.ui.collapsed[g.id]) members.forEach(r => items.push({ t: 'r', g, r }));
+  }
+  return items;
+}
+function popupB() {
+  const W = 78, VIS = 24;
+  const items = itemsB(); scrollTo(items.length, VIS);
+  const d = summary(), u = S.ui, L = [];
+  L.push(line(fit(headerSegs(d), W)));
+  L.push(line([['']]));
+  items.slice(u.offset, u.offset + VIS).forEach((it, i) => {
+    const sel = u.offset + i === u.cursor;
+    if (it.t === 'h') {
+      const folded = u.collapsed[it.g.id];
+      L.push(line(fit([[sel ? '▌' : ' ', 'blue'], [folded ? '▸ ' : '▾ ', 'dim'], [it.g.title, it.g.cls + ' b'], ['  ' + it.n, 'dim'],
+        ...(it.g.id === 'behind' ? [['      p pull --ff-only all', 'mute']] : it.g.id === 'ahead' ? [['      P push all', 'mute']] : [])], W), sel ? 'sel' : ''));
+    } else {
+      const r = it.r, fetching = S.fetching.has(r.path);
+      const also = glyphSegs(r, it.g.id);
+      L.push(line(fit([[sel ? '▌' : ' ', 'blue'], ['    '], [pad(truncL(r.path, 27), 28), 'fg'],
+        [pad(fetching ? spinner() + ' fetching' : it.g.detail(r), 26), fetching ? 'cyan' : 'dim'],
+        ...(also.length ? [['also ', 'mute'], ...also] : [])], W), sel ? 'sel' : ''));
+    }
+  });
+  for (let i = Math.min(VIS, items.length - u.offset); i < VIS; i++) L.push(line([['']]));
+  L.push(lineLR([[items.length > VIS ? ` ${u.offset + 1}–${Math.min(items.length, u.offset + VIS)} of ${items.length}` : '', 'dim']], [[u.msg, 'cyan'], [' ']], W));
+  L.push(line(fit([[' enter', 'blue'], [' open/fold  '], ['space', 'blue'], [' fold  '], ['t', 'blue'], [' tab  '], ['f', 'blue'], [' fetch  '], ['p/P', 'blue'], [' pull/push*  '], ['q', 'blue'], [' close']], W)));
+  L.push(line([[' * stub: should githerd ever write to repos?', 'mute']]));
+  return popupBox(' githerd · triage ', L, W);
+}
+function keysB(e) {
+  const u = S.ui, items = itemsB(), it = items[u.cursor];
+  switch (e.key) {
+    case 'j': case 'ArrowDown': u.cursor++; break;
+    case 'k': case 'ArrowUp': u.cursor--; break;
+    case ' ': if (it) { u.collapsed[it.g.id] = !u.collapsed[it.g.id]; if (it.t === 'r') u.cursor = items.findIndex(x => x.t === 'h' && x.g === it.g); } break;
+    case 'Enter': if (!it) break; if (it.t === 'h') u.collapsed[it.g.id] = !u.collapsed[it.g.id]; else { openRepo(it.r, 'split'); return; } break;
+    case 't': if (it && it.t === 'r') { openRepo(it.r, 'tab'); return; } break;
+    case 'f': refresh('popup f', true); return;
+    case 'p': u.msg = 'stub: would run git pull --ff-only in every TO PULL repo'; log('stub: pull --ff-only all (not built)'); break;
+    case 'P': u.msg = 'stub: would run git push in every TO PUSH repo'; log('stub: push all (not built)'); break;
+    case 'q': case 'Escape': closePopup(); return;
+    default: return false;
+  }
+  render();
+}
+
+/* ================= variant C: picker + preview ================= */
+function previewLines(r, W, H) {
+  const L = [];
+  if (!r) { L.push([['  nothing selected', 'dim']]); }
+  else {
+    L.push([[' ' + r.path, 'fg b']]);
+    if (r.detached) L.push([[' detached at ', 'dim'], [r.detached, 'mag']]);
+    else L.push([[' ' + r.branch, 'mag'], [' → ', 'dim'], [r.upstream || 'no upstream', r.upstream ? 'dim' : 'red']]);
+    if (r.stale) L.push([[' ⚠ fetch failed: ' + r.stale, 'red']]);
+    else L.push([[S.fetching.has(r.path) ? ` ${spinner()} fetching…` : r.remote ? ` fetched ${r.fetched}m ago` : ' no remote', S.fetching.has(r.path) ? 'cyan' : 'dim']]);
+    L.push([['']]);
+    if (r.unc) {
+      L.push([[` Uncommitted (${r.unc})`, 'yellow b']]);
+      r.files.slice(0, 6).forEach(([st, f]) => L.push([['  ' + st + ' ', st === '??' ? 'red' : 'yellow'], [f]]));
+      if (r.unc > 6) L.push([[`   … ${r.unc - 6} more`, 'dim']]);
+    }
+    if (r.ahead) {
+      L.push([[r.noUp ? ` Local commits, on no remote (${r.ahead})` : ` To push (${r.ahead})`, 'cyan b']]);
+      r.aheadLog.slice(0, 4).forEach(([h, m]) => L.push([['   ' + h + ' ', 'yellow'], [m]]));
+    }
+    if (r.behind) {
+      L.push([[` To pull (${r.behind})`, 'mag b']]);
+      r.behindLog.slice(0, 4).forEach(([h, m]) => L.push([['   ' + h + ' ', 'yellow'], [m]]));
+    }
+    if (r.noUp && !r.ahead) L.push([[' No upstream: ', 'red'], [r.remote ? 'branch never pushed' : 'repo has no remote', 'dim']]);
+    if (!r.att) L.push([[' ✓ nothing to commit, push or pull', 'green']]);
+  }
+  while (L.length < H) L.push([['']]);
+  return L.slice(0, H).map(a => fit(a, W));
+}
+function popupC() {
+  const LW = 40, RW = 66, H = 20, W = LW + 1 + RW;
+  const rs = visibleRepos(); scrollTo(rs.length, H);
+  const d = summary(), u = S.ui, L = [];
+  L.push(lineLR([[' > ', 'blue'], [u.filter], [' ', 'cursor']], [[`${rs.length}/${d.total}`, 'dim'], [' · '], [`${d.att} need attention`, d.att ? 'yellow' : 'green'], [' ']], W));
+  L.push(line([['─'.repeat(LW) + '┬' + '─'.repeat(RW), 'mute']]));
+  const pv = previewLines(rs[u.cursor], RW, H);
+  for (let i = 0; i < H; i++) {
+    const r = rs[u.offset + i], sel = u.offset + i === u.cursor;
+    let left;
+    if (r) {
+      const g = glyphSegs(r);
+      const gl = segLen(g);
+      left = fit([[sel ? '▌' : ' ', 'blue'], [' '], [pad(truncL(r.path, LW - 4 - gl - 1), LW - 3 - gl), r.att ? 'fg' : 'dim'], ...g], LW);
+    } else left = fit([[i === 0 ? '   no match' : '', 'dim']], LW);
+    L.push(`<div class="ln"><span class="${sel ? 'sel' : ''}">${segHtml(left)}</span><span class="mute">│</span>${segHtml(pv[i])}</div>`);
+  }
+  L.push(line([['─'.repeat(LW) + '┴' + '─'.repeat(RW), 'mute']]));
+  L.push(lineLR(fit([[' enter', 'blue'], [' split  '], ['^t', 'blue'], [' tab  '], ['^l', 'blue'], [' lazygit  '], ['^w', 'blue'], [' new workspace  '], ['^f', 'blue'], [' fetch  '], ['↑↓', 'blue'], [' move  '], ['esc', 'blue'], [' close']], W - segLen([[u.msg]]) - 1), [[u.msg, 'cyan']], W));
+  return popupBox(' githerd · pick a repo ', L, W);
+}
+function keysC(e) {
+  const u = S.ui, rs = visibleRepos(), r = rs[u.cursor];
+  if (e.ctrlKey) {
+    const k = e.key.toLowerCase();
+    if (k === 't' && r) { openRepo(r, 'tab'); return; }
+    if (k === 'l' && r) { openRepo(r, 'lazygit'); return; }
+    if (k === 'w' && r) { openRepo(r, 'workspace'); return; }
+    if (k === 'f') { refresh('picker ^f', true); return; }
+    if (k === 'n') { u.cursor++; render(); return; }
+    if (k === 'p') { u.cursor--; render(); return; }
+    return false;
+  }
+  switch (e.key) {
+    case 'ArrowDown': u.cursor++; break;
+    case 'ArrowUp': u.cursor--; break;
+    case 'Enter': if (r) openRepo(r, 'split'); return;
+    case 'Escape': closePopup(); return;
+    case 'Backspace': u.filter = u.filter.slice(0, -1); u.cursor = 0; break;
+    default:
+      if (e.key.length === 1) { u.filter += e.key; u.cursor = 0; break; }
+      return false;
+  }
+  render();
+}
+
+/* ================= variant D: docked live rail ================= */
+function railRepos() { return S.repos.map(derive).sort(SORTS.attention); }
+function railLines() {
+  const W = 37, VIS = 22, d = summary(), rail = S.rail, rs = railRepos();
+  rail.cursor = Math.max(0, Math.min(rail.cursor, rs.length - 1));
+  if (rail.cursor < rail.offset) rail.offset = rail.cursor;
+  if (rail.cursor >= rail.offset + VIS) rail.offset = rail.cursor - VIS + 1;
+  const L = [];
+  L.push(lineLR([['~/work', 'blue']], [[S.fetching.size ? spinner() + ' fetch' : `↻ ${rail.countdown}s`, 'dim']], W));
+  L.push(line(fit([[`${d.att}/${d.total} need attention`, d.att ? 'yellow b' : 'green b'], ...(d.stale ? [[' · '], [`${d.stale} stale`, 'red']] : [])], W)));
+  L.push(line([['─'.repeat(W), 'mute']]));
+  let cleanHeader = false;
+  rs.slice(rail.offset, rail.offset + VIS).forEach((r, i) => {
+    const idx = rail.offset + i, sel = rail.focused && idx === rail.cursor;
+    if (!r.att && !cleanHeader) { cleanHeader = true; L.push(line([['── clean ' + '─'.repeat(W - 9), 'mute']])); }
+    const g = glyphSegs(r); const gl = segLen(g);
+    L.push(line(fit([[sel ? '▌' : ' ', 'blue'], [pad(truncL(r.path.replace(/^repos\//, ''), W - gl - 3), W - gl - 2), r.att ? 'fg' : 'dim'], ...(gl ? g : [['✓', 'green']])], W), sel ? 'sel' : ''));
+  });
+  L.push(line([['─'.repeat(W), 'mute']]));
+  L.push(line(fit([[S.fetching.size ? 'fetching…' : `fetched ${d.oldest}m ago · TTL ${S.ttl}m`, 'dim']], W)));
+  L.push(line(fit(rail.focused ? [['enter', 'blue'], [' tab '], ['s', 'blue'], [' split '], ['f', 'blue'], [' fetch '], ['esc', 'blue'], [' back']] : [['g', 'blue'], [' to focus', 'dim']], W)));
+  if (S.ui.msg) L.push(line(fit([[S.ui.msg, 'cyan']], W)));
+  return L;
+}
+function keysD(e) {
+  const rail = S.rail, rs = railRepos(), r = rs[rail.cursor];
+  if (!rail.focused) return false;
+  switch (e.key) {
+    case 'j': case 'ArrowDown': rail.cursor++; break;
+    case 'k': case 'ArrowUp': rail.cursor--; break;
+    case 'Enter': if (r) openRepo(r, 'tab'); return;
+    case 's': if (r) openRepo(r, 'split'); return;
+    case 'l': if (r) openRepo(r, 'lazygit'); return;
+    case 'f': refresh('rail f', true); return;
+    case 'Escape': rail.focused = false; curTab().focus = 0; break;
+    default: return false;
+  }
+  render();
+}
+
+/* ================= popups + actions ================= */
+function popupBox(title, lines, W) {
+  return `<div class="overlay"><div class="popup" style="width:calc(${W}ch + 2ch + 2px)"><div class="ptitle">${esc(title)}</div>${lines.join('')}</div></div>`;
+}
+function openAction(source) {
+  const v = VARIANTS[variant];
+  log(`${source}: plugin action githerd.${v.action}`);
+  if (variant === 'D') {
+    S.activeTab = 0; const t = curTab();
+    if (!t.panes.some(p => p.kind === 'rail')) { t.panes.push({ kind: 'rail' }); log('$ herdr plugin pane open --plugin githerd --entrypoint rail --placement split --direction right --no-focus   # opens at 50%: no --ratio flag'); }
+    t.focus = t.panes.findIndex(p => p.kind === 'rail'); S.rail.focused = true;
+    refresh('githerd.focus');
+    return;
+  }
+  if (S.ui.open) { log('popup already open → Herdr answers ui_busy (popups are a singleton)'); render(); return; }
+  S.ui = { ...freshUi(), collapsed: S.ui.collapsed, showClean: S.ui.showClean, sort: S.ui.sort, open: true };
+  log(`$ herdr plugin pane open --plugin githerd --entrypoint ${variant === 'C' ? 'picker' : 'table'} --placement popup`);
+  refresh(`githerd.${v.action}`);
+}
+function closePopup() { S.ui.open = false; S.ui.filtering = false; render(); }
+function openRepo(r, how) {
+  S.ui.open = false;
+  const cwd = `~/work${r.path === '.' ? '' : '/' + r.path}`;
+  if (how === 'workspace') {
+    if (!S.extraWorkspaces.some(w => w.name === short(r.path))) {
+      S.extraWorkspaces.push({ name: short(r.path), branch: r.branch || r.detached, git: gitStatus(r) });
+    }
+    log(`open ${r.path} as a new workspace (built-in branch/git_status now cover it)`);
+    log(`$ herdr workspace create --cwd ${cwd} --label ${short(r.path)} --focus`);
+    render(); return;
+  }
+  const kind = how === 'lazygit' ? 'lazygit' : 'shell';
+  if (how === 'tab') {
+    S.tabs.push({ title: short(r.path), panes: [{ kind, repo: r.path }], focus: 0 });
+    S.activeTab = S.tabs.length - 1;
+  } else {
+    S.activeTab = 0;
+    const t = curTab();
+    const railAt = t.panes.findIndex(p => p.kind === 'rail');
+    const at = railAt === -1 ? t.panes.length : railAt;
+    t.panes.splice(at, 0, { kind, repo: r.path });
+    t.focus = at;
+  }
+  S.rail.focused = false;
+  log(`open ${r.path} in a ${how === 'tab' ? 'tab' : 'split'} running ${kind === 'lazygit' ? 'lazygit' : '$SHELL'}`);
+  if (how === 'tab') log(`$ herdr tab create --cwd ${cwd} --label ${short(r.path)} --focus`);
+  else log(`$ herdr pane split --pane <focused_pane_id from context> --direction right --cwd ${cwd} --focus`);
+  if (kind === 'lazygit') log('$ herdr pane run <new pane_id> lazygit   # split/tab take no command; pane run types it into the shell');
+  render();
+}
+function mainKeys(e) {
+  const t = curTab();
+  if (e.key === 'g') { openAction('prefix g'); return; }
+  if (e.key === 'o') {
+    t.focus = (t.focus + 1) % t.panes.length;
+    S.rail.focused = t.panes[t.focus].kind === 'rail';
+    render(); return;
+  }
+  if (e.key === 'x') {
+    const p = t.panes[t.focus];
+    if (p.kind === 'shell' || p.kind === 'lazygit') {
+      t.panes.splice(t.focus, 1);
+      if (!t.panes.length) { S.tabs.splice(S.activeTab, 1); S.activeTab = 0; }
+      else t.focus = 0;
+    } else if (p.kind === 'rail') { t.panes.splice(t.focus, 1); t.focus = 0; S.rail.focused = false; log('rail closed: only hooks refresh the token now'); }
+    render(); return;
+  }
+  if (/^[1-9]$/.test(e.key) && S.tabs[+e.key - 1]) { S.activeTab = +e.key - 1; render(); return; }
+  return false;
+}
+
+/* ================= inspector ================= */
+function configToml() {
+  const style = tokenStyle();
+  const Y = '#e5b567', G = '#9ccc7a', RD = '#f07178';
+  const tok = {
+    count: `{ token = "$repos", fg = "${Y}", rules = [{ starts_with = "✓", fg = "${G}" }] }`,
+    glyph: `{ token = "$repos", fg = "${Y}", bold = true, rules = [{ equals = "✓", fg = "${G}" }] }`,
+    words: `{ token = "$repos", fg = "${Y}", rules = [{ equals = "all clean", fg = "${G}" }] }`,
+    breakdown: `{ token = "$uncommitted", fg = "${Y}" },\n    { token = "$ahead", fg = "#7cc5d9" },\n    { token = "$behind", fg = "#c79bf0" },\n    { token = "$no_upstream", fg = "${RD}" },\n    { token = "$repos", fg = "${G}" }`,
+  }[style];
+  const act = VARIANTS[variant].action;
+  const pane = {
+    A: `[[panes]]\nid = "table"\ntitle = "githerd"\nplacement = "popup"\nwidth = "90%"\nheight = "75%"\ncommand = ["./bin/githerd", "tui", "table"]`,
+    B: `[[panes]]\nid = "table"\ntitle = "githerd"\nplacement = "popup"\nwidth = 84\nheight = "85%"\ncommand = ["./bin/githerd", "tui", "triage"]`,
+    C: `[[panes]]\nid = "picker"\ntitle = "githerd"\nplacement = "popup"\nwidth = "95%"\nheight = "75%"\ncommand = ["./bin/githerd", "tui", "picker"]`,
+    D: `[[panes]]\nid = "rail"\ntitle = "githerd"\nplacement = "split"      # opens at 50%; no width for splits\ncommand = ["./bin/githerd", "rail", "--every", "30s"]`,
+  }[variant];
+  const tabbar = S.tabbar.on ? `\n[ui]\ntab_bar_right = [\n  { type = "command", command = "githerd herdr tick", interval_seconds = 60, timeout_seconds = 20 },\n]\n` : '';
+  return `# ~/.config/herdr/config.toml  (user pastes this)
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status",
+    ${tok},
+    { token = "$stale", fg = "${RD}" }],
+]
+${S.paneTokens ? `
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "agent", "state_text"],
+  ["$repo"],
+]
+` : ''}${tabbar}
+[[keys.command]]
+key = "prefix+g"
+type = "plugin_action"
+command = "githerd.${act}"
+
+# herdr-plugin.toml  (ships with githerd)
+id = "githerd"
+name = "githerd"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+
+[[actions]]
+id = "${act}"
+title = "${{ open: 'Repo status', pick: 'Pick a repo', focus: 'Focus repo rail' }[act]}"
+contexts = ["workspace"]
+command = ["./bin/githerd", "herdr", "${act}"]
+
+[[startup]]               # tokens are not restored after a restart
+command = ["./bin/githerd", "herdr", "report"]
+
+[[events]]
+on = "pane.agent_status_changed"   # hook filters agent_status = done|idle
+command = ["./bin/githerd", "herdr", "report"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/githerd", "herdr", "report"]
+
+${pane}`;
+}
+function cliText() {
+  const rs = S.repos.map(derive).sort(SORTS.path), d = summary();
+  const rows = rs.map(r => pad(r.path, 28) + pad(r.detached ? `(${r.detached})` : r.branch, 16) + padL(r.unc, 11) + padL(r.ahead, 6) + padL(r.behind, 7) + '  ' + (r.detached ? 'detached' : r.upstream || '-') + (r.stale ? '  stale' : ''));
+  return `$ githerd status ~/work\n${pad('REPO', 28)}${pad('BRANCH', 16)}${padL('UNCOMMITTED', 11)}${padL('AHEAD', 6)}${padL('BEHIND', 7)}  UPSTREAM\n${rows.join('\n')}\n\n${d.att} of ${d.total} repos need attention${d.stale ? ` · ${d.stale} stale` : ''}`;
+}
+function jsonText() {
+  const rs = S.repos.map(derive).sort(SORTS.path);
+  return JSON.stringify({ root: '~/work', repos: rs.map(r => ({ path: r.path, branch: r.branch, detached: r.detached, upstream: r.upstream,
+    uncommitted: r.unc, ahead: r.ahead, behind: r.behind, needsAttention: r.att, stale: r.stale, fetchedMinutesAgo: r.fetched })) }, null, 1)
+    .replace(/\n {2,}/g, ' ').replace(/\{ /g, '{').replace(/ \}/g, '}');
+}
+function renderInspector() {
+  const v = VARIANTS[variant];
+  document.getElementById('iTitle').textContent = `${variant} · ${v.name}`;
+  document.getElementById('iIdea').textContent = v.idea;
+  document.getElementById('iProbes').innerHTML = v.probes.map(p => `<li>${esc(p)}</li>`).join('');
+  document.getElementById('iReports').textContent = S.reports.join('\n\n') || '(nothing reported yet: press g or a trigger)';
+  document.getElementById('iLog').textContent = S.log.join('\n') || '(empty)';
+  document.getElementById('iConfig').textContent = configToml();
+  document.getElementById('iCli').textContent = cliText();
+  document.getElementById('iJson').textContent = jsonText();
+}
+
+/* ================= render + wiring ================= */
+function render() {
+  renderSidebar();
+  renderMain();
+  let ov = '';
+  if (S.ui.open) ov = variant === 'A' ? popupA() : variant === 'B' ? popupB() : popupC();
+  document.getElementById('overlay').innerHTML = ov;
+  renderInspector();
+  const v = VARIANTS[variant];
+  document.getElementById('vlabel').innerHTML = `${variant} · ${esc(v.name)}<small>${KEYS.indexOf(variant) + 1}/${KEYS.length}</small>`;
+}
+function setVariant(v) {
+  variant = v;
+  const url = new URL(location.href); url.searchParams.set('variant', v); history.replaceState(null, '', url);
+  resetUi();
+  log(`variant ${v}: ${VARIANTS[v].name}`);
+  report('variant switch');
+  render();
+}
+function cycle(dir) { setVariant(KEYS[(KEYS.indexOf(variant) + dir + KEYS.length) % KEYS.length]); }
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t.closest && t.closest('input, textarea, select, [contenteditable]')) return;
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); cycle(e.key === 'ArrowLeft' ? -1 : 1); return; }
+  if (e.metaKey || e.altKey) return;
+  let handled;
+  if (S.ui.open) handled = variant === 'A' ? keysA(e) : variant === 'B' ? keysB(e) : keysC(e);
+  else if (variant === 'D' && S.rail.focused) { handled = keysD(e); if (handled === false) handled = mainKeys(e); }
+  else handled = mainKeys(e);
+  if (handled !== false) e.preventDefault();
+});
+document.getElementById('herdr').addEventListener('mousedown', () => setTimeout(() => document.getElementById('herdr').focus(), 0));
+
+document.getElementById('scenario').onchange = e => {
+  S.scenario = e.target.value; S.repos = SCENARIOS[S.scenario](); S.webBumped = false; S.fetching.clear();
+  S.ui.cursor = 0; S.ui.offset = 0; S.rail.cursor = 0;
+  log(`scenario: ${e.target.selectedOptions[0].text}`); report('scenario change'); render();
+};
+document.getElementById('age').onclick = () => { S.repos.forEach(r => { if (r.remote) r.fetched += 10; }); log('time passes: every FETCH_HEAD is 10 min older'); render(); };
+document.getElementById('tokenStyle').onchange = e => { S.tokenStyle = e.target.value; report('token style change'); render(); };
+document.getElementById('zero').onchange = e => { S.zero = e.target.value; report('zero-state change'); render(); };
+document.getElementById('paneTokens').onchange = e => { S.paneTokens = e.target.checked; report('pane tokens toggled'); render(); };
+document.getElementById('tabbar').onchange = e => { S.tabbar.on = e.target.checked; S.tabbar.countdown = 60; log(`tab_bar_right command ${S.tabbar.on ? 'on: runs githerd every 60 s (timer + segment)' : 'off'}`); render(); };
+document.getElementById('ttl').onchange = e => { S.ttl = +e.target.value; log(`fetch TTL = ${S.ttl} min`); render(); };
+document.querySelectorAll('[data-trigger]').forEach(b => b.onclick = () => {
+  const k = b.dataset.trigger;
+  if (k === 'keypress') { openAction('prefix g'); }
+  else if (k === 'agent-stop') { S.agentState = 'done'; log('event pane.agent_status_changed {agent_status: done} → [[events]] hook'); refresh('event: agent done'); setTimeout(() => { S.agentState = 'working'; render(); }, 6000); }
+  else if (k === 'event') refresh('event: workspace.focused');
+  else if (k === 'startup') { log('server restarted: tokens are NOT restored, sidebar empty until a report'); refresh('[[startup]] hook'); }
+  else if (k === 'tabbar') { S.tabbar.countdown = 0; }
+  else if (k === 'fetch') refresh('manual fetch', true);
+  document.getElementById('herdr').focus();
+});
+document.getElementById('toggleInspector').onclick = e => {
+  const i = document.getElementById('inspector'); i.classList.toggle('hidden');
+  e.target.textContent = i.classList.contains('hidden') ? 'show inspector' : 'hide inspector';
+};
+
+/* ticking: spinners while fetching, D's own refresh loop */
+setInterval(() => {
+  let dirty = S.fetching.size > 0 || S.agentState === 'working';
+  if (variant === 'D' && curTab().panes.some(p => p.kind === 'rail')) {
+    S.rail.countdown--;
+    if (S.rail.countdown <= 0) { S.rail.countdown = 30; refresh('rail timer (30 s)'); }
+    dirty = true;
+  }
+  if (S.tabbar.on) {
+    S.tabbar.countdown--;
+    if (S.tabbar.countdown <= 0) { S.tabbar.countdown = 60; refresh('tab_bar_right tick (60 s)'); }
+    dirty = true;
+  }
+  if (dirty) render();
+}, 1000);
+setInterval(() => { if (S.fetching.size) render(); }, 120);
+
+log('session start');
+report('startup hook');
+render();
+document.getElementById('herdr').focus();
+</script>
+</body>
+</html>
