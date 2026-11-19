@@ -18,6 +18,10 @@ func railKey(m Model, k Key) (Model, []Cmd) {
 		m = m.move(1)
 	case "k", KeyUp:
 		m = m.move(-1)
+	case KeyEnter, "l", KeyRight:
+		return m.openPage()
+	case "z":
+		return m, m.zoom(ZoomToggle)
 	case "/":
 		m.filtering = true
 	case KeyEsc:
@@ -100,7 +104,7 @@ func (m Model) settle() Model {
 		m.selected = lines[0].repo.Dir
 	}
 	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-m.footerRows())
-	return m
+	return m.settlePage()
 }
 
 // line is one repo line of the rail.

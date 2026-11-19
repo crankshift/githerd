@@ -1,0 +1,24 @@
+│repos/acme/api  feature/login → origin/feature/login  ●3 ⇡2                           fetched 4m ago│
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│Changes 3                             │branch main                                                  │
+│  M  src/routes.go                    │tracks origin/main  ⇣3                                       │
+│   M src/auth.go                      │                                                             │
+│  ?? src/auth_test.go                 │Recent commits                                               │
+│To push 2                             │  1a2b3c4 Bump the Go version                  Ada Example 3h│
+│  b81e0d4 Validate login payload    2h│  9c0d1e2 Add login form                       Ada Example 1d│
+│  3f2a9c1 Add session refresh endp… 5h│  77a1f3b Set up the router                    Ada Example 3d│
+│To pull 0                             │                                                             │
+│  nothing to pull                     │                                                             │
+│Branches 5                            │                                                             │
+│  * feature/login                   ⇡2│                                                             │
+│    fix/token-expiry     ∅ no upstream│                                                             │
+│    main                            ⇣3│                                                             │ selected
+│    old/feature                   gone│                                                             │
+│    origin/release/1.9          remote│                                                             │
+│Log                                   │                                                             │
+│  9c0d1e2 Add login form            1d│                                                             │
+│  77a1f3b Set up the router         3d│                                                             │
+│  e4b2c90 Initial commit           1mo│                                                             │
+│                                      │                                                             │
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit                                             │

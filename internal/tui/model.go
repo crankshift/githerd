@@ -76,9 +76,33 @@ type Refresh struct{ Force []string }
 // Quit asks the terminal layer to restore the terminal and exit.
 type Quit struct{}
 
-func (Load) cmd()    {}
-func (Refresh) cmd() {}
-func (Quit) cmd()    {}
+// Zoom asks Herdr to zoom Pane, the rail's own pane, in or out, or to
+// toggle it: `herdr pane zoom --pane <Pane> --on|--off|--toggle`. It always
+// names the pane, since Herdr would otherwise zoom whichever pane has focus.
+type Zoom struct {
+	Pane string
+	Mode ZoomMode
+}
+
+// ZoomMode is what a Zoom does.
+type ZoomMode string
+
+// The zoom modes.
+const (
+	ZoomOn     ZoomMode = "on"
+	ZoomOff    ZoomMode = "off"
+	ZoomToggle ZoomMode = "toggle"
+)
+
+// LoadPage asks for what the repo page of the repo in Dir lists; the
+// answer is a PageLoaded.
+type LoadPage struct{ Dir string }
+
+func (Load) cmd()     {}
+func (Refresh) cmd()  {}
+func (Quit) cmd()     {}
+func (Zoom) cmd()     {}
+func (LoadPage) cmd() {}
 
 // Options are what the rail knows when it opens.
 type Options struct {
@@ -87,13 +111,18 @@ type Options struct {
 	// symlinks resolved. It picks the root to show and the repo to start on.
 	Cwd       string
 	RootsFile string // where the roots file is, as the no-roots guidance shows it
+	// Pane is the rail's own pane, from HERDR_PANE_ID, which the requests
+	// to Herdr name. Without it, the rail asks Herdr for nothing.
+	Pane string
 }
 
 // Model is the state of the UI. The zero Model is not usable; use New.
 type Model struct {
-	opts   Options
-	now    time.Time
-	height int
+	opts          Options
+	now           time.Time
+	width, height int
+
+	page page // the repo page; open when its dir is set
 
 	loaded   bool   // a Loaded has arrived
 	roots    []Root // as last loaded
@@ -124,7 +153,7 @@ func Update(m Model, msg Msg) (Model, []Cmd) {
 	var cmds []Cmd
 	switch msg := msg.(type) {
 	case Resize:
-		m.height = msg.Height
+		m.width, m.height = msg.Width, msg.Height
 	case Tick:
 		m.now = msg.Now
 		if !m.refreshing && !m.next.IsZero() && !m.now.Before(m.next) {
@@ -132,18 +161,39 @@ func Update(m Model, msg Msg) (Model, []Cmd) {
 		}
 	case Loaded:
 		m, cmds = loaded(m, msg)
+	case PageLoaded:
+		m = m.pageLoaded(msg)
+	case DetailLoaded:
+		m = m.detailLoaded(msg)
 	case Key:
 		if msg == KeyCtrlC {
 			return m, []Cmd{Quit{}}
 		}
-		m, cmds = railKey(m, msg)
+		if m.page.open() {
+			m, cmds = pageKey(m, msg)
+		} else {
+			m, cmds = railKey(m, msg)
+		}
 	}
-	return m.settle(), cmds
+	m, ask := m.askDetail()
+	return m.settle(), append(cmds, ask...)
 }
 
 // View draws the model width columns wide and height rows high.
 func View(m Model, width, height int) Screen {
+	if m.page.open() {
+		return pageView(m, width, height)
+	}
 	return railView(m, width, height)
+}
+
+// zoom returns the request to zoom the rail's own pane as mode says, or
+// none when the rail doesn't know its pane.
+func (m Model) zoom(mode ZoomMode) []Cmd {
+	if m.opts.Pane == "" {
+		return nil
+	}
+	return []Cmd{Zoom{Pane: m.opts.Pane, Mode: mode}}
 }
 
 // loaded takes in the state in msg and starts a refresh when it answered

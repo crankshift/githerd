@@ -1,0 +1,24 @@
+│repos/acme/api  feature/login → origin/feature/login  ●3 ⇡2                           fetched 4m ago│
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│Changes 3                             │src/routes.go                                           +3 −1│
+│  M  src/routes.go                    │staged                                                       │ selected
+│   M src/auth.go                      │@@ -1,7 +1,8 @@                                              │
+│  ?? src/auth_test.go                 │   1    1  package routes                                    │
+│To push 2                             │   2    2                                                    │
+│  b81e0d4 Validate login payload    2h│   3    3  import "example.com/api/auth"                     │
+│  3f2a9c1 Add session refresh endp… 5h│   4    4                                                    │
+│To pull 0                             │   5    5  func Register(r *Router) {                        │
+│  nothing to pull                     │   6    6      r.Post("/login", auth.Login)                  │
+│Branches 5                            │        7 +    r.Post("/session/refresh", auth.Refresh)      │
+│  * feature/login                   ⇡2│   7    8  }                                                 │
+│    fix/token-expiry     ∅ no upstream│@@ -40,3 +41,4 @@ func Register(r *Router) {                 │
+│    main                            ⇣3│  40   41  func health(w Writer) {                           │
+│    old/feature                   gone│  41      -    w.Write("ok")                                 │
+│    origin/release/1.9          remote│       42 +    w.WriteHeader(200)                            │
+│Log                                   │       43 +    w.Write("ok\n")                               │
+│  9c0d1e2 Add login form            1d│  42   44  }                                                 │
+│  77a1f3b Set up the router         3d│                                                             │
+│  e4b2c90 Initial commit           1mo│                                                             │
+│                                      │                                                             │
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit                                             │

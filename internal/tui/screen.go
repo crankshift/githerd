@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -25,9 +26,10 @@ type Span struct {
 
 // Style is how a Span is drawn.
 type Style struct {
-	Color Color
-	Bold  bool
-	Dim   bool
+	Color   Color
+	Bold    bool
+	Dim     bool
+	Reverse bool // in reverse video, as the cursor's part of a line is
 }
 
 // Color is a terminal foreground color.
@@ -55,12 +57,12 @@ func (l Line) Text() string {
 
 // String returns the screen as plain text for golden files: each line
 // between │ borders, so trailing blanks show, followed by the line's
-// selected and dim marks.
+// selected and dim marks. A line is marked selected when part of it is.
 func (s Screen) String() string {
 	var b strings.Builder
 	for _, l := range s {
 		b.WriteString("│" + l.Text() + "│")
-		if l.Selected {
+		if l.Selected || slices.ContainsFunc(l.Spans, func(sp Span) bool { return sp.Style.Reverse }) {
 			b.WriteString(" selected")
 		}
 		if l.Dim {
@@ -98,6 +100,9 @@ func sgr(style Style, dim bool) string {
 	}
 	if style.Dim || dim {
 		codes = append(codes, "2")
+	}
+	if style.Reverse {
+		codes = append(codes, "7")
 	}
 	if style.Color != Default {
 		codes = append(codes, strconv.Itoa(30+int(ansiColor[style.Color])))
