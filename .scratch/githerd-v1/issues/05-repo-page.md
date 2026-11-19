@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Enter returns a zoom-on command; Esc returns zoom-off and goes back to the rail with the cursor kept
+- [ ] Enter returns a zoom-on command for the rail's own pane (`--pane`, never the focused pane); Esc returns zoom-off and goes back to the rail with the cursor kept
 - [ ] Changes: staged and unstaged diffs; untracked files shown in full as added
 - [ ] To push and To pull list commits; the selected commit shows its full diff
 - [ ] Branches: local branches with upstream ahead/behind or "no upstream", plus remote-only branches; the selected branch shows a summary and its recent commits

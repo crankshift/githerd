@@ -12,7 +12,7 @@ Rail lines show the name of each workspace mapped to the repo. Creating, closing
 **Status:** ready-for-agent
 
 - [ ] `o` returns `workspace focus <id>` when a workspace maps to the repo (root repo → root workspace), else `workspace create --cwd <repo> --label <name> --focus`
-- [ ] `s` returns a `pane split` beside the rail with the repo as cwd
+- [ ] `s` returns a `pane split --pane <rail>` with the repo as cwd
 - [ ] `L` returns the split plus `pane run <pane> lazygit` when lazygit is on PATH; otherwise the rail shows a message
 - [ ] Rail lines carry `⧉<workspace>` for every mapped workspace, refreshed from the snapshot on each sync
 - [ ] Tests on the model's returned commands for each case, and a golden view with workspace names

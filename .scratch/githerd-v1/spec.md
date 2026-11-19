@@ -110,11 +110,13 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
 
 - **Herdr adapter.** It runs as `githerd herdr sync`, from the startup hook, the event hooks and the rail.
   - It reads the roots file in the plugin config dir: one path per line, `~` expanded, blank lines and `#` comments ignored. With no roots it reports nothing.
-  - It maps workspaces through `herdr api snapshot`, using the cwd of the root pane of each workspace's first tab:
+  - It maps workspaces through `herdr api snapshot`, using the cwd of the first pane listed for each workspace's first tab. The snapshot has no layout tree, so this stands in for Herdr's root pane; the two differ only when the user has moved panes in that tab.
     - a cwd inside a root but inside no nested repo makes a root workspace;
     - a cwd inside a nested repo makes a mapped workspace, mapped to the deepest repo;
     - anything else is outside, and githerd clears any token it reported earlier.
-  - It reports through `$HERDR_BIN_PATH workspace report-metadata` with `--source githerd`. `--seq` is the Unix time in milliseconds, and there is never a `--ttl-ms`. The token values below came from the prototype:
+  - It reports through `$HERDR_BIN_PATH workspace report-metadata` with `--source githerd`, one call per workspace carrying every `--token` and `--clear-token`. There is never a `--ttl-ms`.
+  - Herdr silently ignores a report whose `--seq` is not higher than the last one from the same source. So `--seq` is the larger of the Unix time in milliseconds and the previous value plus one, and the previous value is kept in the plugin state dir under the sync lock.
+  - The token values below came from the prototype:
 
     | Workspace | Token | Value |
     | --- | --- | --- |
@@ -124,10 +126,12 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
     | mapped | `stale` | `⚠` when its repo is stale, else cleared |
 
   - For `pane.agent_status_changed` it reads the event JSON and acts only when the agent is done or idle.
-  - Hooks can fire in bursts, so a sync takes a lock in the plugin state dir. If another sync holds the lock, it exits at once.
+  - Hooks fire in bursts: `workspace.focused` fires on every change of focused pane, and one finished agent usually reports `done` and then `idle`. So a sync takes a lock in the plugin state dir. A sync that finds the lock held leaves a pending mark and exits; the running sync checks for the mark when it finishes and runs once more.
 - **Rail and repo page (TUI).** A pure model with `Update(model, key)` and `View(model, width, height)`, driven by a thin terminal layer: raw mode through `syscall`, alternate screen, resize on `SIGWINCH`.
   - **Rail.**
-    - It lists the repos of the root of the workspace it was opened from, or the first configured root when that workspace is outside every root. Needs attention comes first, then clean repos dimmed.
+    - It learns where it was opened from `HERDR_PLUGIN_CONTEXT_JSON`: the focused pane and its cwd at open time. `HERDR_PANE_ID` is the rail's own pane.
+    - It lists the repos of the root of the workspace it was opened from, or the first configured root when that workspace is outside every root.
+    - It marks its own pane with a pane token (`githerd` = `rail`), so the action can find it in the snapshot. Herdr's own plugin-pane registry can't be queried and is lost on restart. Needs attention comes first, then clean repos dimmed.
     - Each line shows the state glyphs and the name of any mapped workspace.
     - `/` filters the list.
     - It refreshes every 30 seconds. Each refresh fetches with the TTL and also runs a sync.
@@ -138,7 +142,7 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
   - **Keys.**
     - Movement: `j`/`k` and arrows move. Enter/`l`/→ opens the repo page. Esc/`h`/← goes back.
     - Actions: `o`, `s`, `L`, `f`, `z`.
-  - **Herdr requests.** The model returns these as commands; the terminal layer runs them:
+  - **Herdr requests.** The model returns these as commands; the terminal layer runs them. Zoom, resize and split always name the pane with `--pane`; without it Herdr acts on whichever pane has focus.
     - zoom on with the repo page and off with Esc;
     - `workspace focus <id>` when a workspace maps to the repo;
     - otherwise `workspace create --cwd <repo> --label <name> --focus`;
@@ -147,10 +151,11 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
 - **Plugin manifest** at the repo root:
   - id `githerd`, `min_herdr_version` 0.9.5, platforms linux and macos;
   - `[[build]]` runs `go build`;
-  - action `rail`: opens the rail pane as a split, narrowed with `pane resize`, or focuses the existing one;
+  - action `rail`: if the snapshot shows a pane in the current workspace carrying the rail's pane token, focus it. Otherwise open the rail pane as a split with `--target-pane` set to the focused pane, then narrow it with `pane resize --direction right --amount 0.25`. The amount is a ratio delta, so the rail ends up about a quarter of the width. After a Herdr restart the old rail comes back as a plain shell without the token, so the action opens a fresh one;
   - pane `rail`;
   - `[[startup]]` and `[[events]]` (`workspace.created`, `workspace.closed`, `workspace.focused`, `pane.agent_status_changed`) all run the sync.
 - **Module path:** `github.com/crankshift/githerd`. The CLI installs with `go install`.
+- **Environment.** The `[[build]]` step inherits the PATH of the shell that runs `herdr plugin install`, so `go` must be on it. Runtime commands get the Herdr server's environment, which includes the PATH used for the lazygit check. Relative commands such as `./bin/githerd` resolve against the plugin root, which changes on every update, so the plugin root is never stored.
 
 ## Testing Decisions
 
@@ -178,5 +183,5 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
 ## Further Notes
 
 - Prototype: branch `prototype/herdr-ui`. `navigator.html` is the D3 design with every decision applied; verdicts are in `.scratch/githerd-v1/prototype.md`.
-- Herdr facts and their sources: `.scratch/research/herdr-v0.9.5.md`.
+- Herdr facts and their sources: `.scratch/research/herdr-v0.9.5.md`, plus exact CLI flags, JSON shapes and exit codes in `.scratch/research/herdr-json-v0.9.5.md`. Note that `report-metadata` and `pane run` print nothing on success, and errors are JSON on stderr with exit 1.
 - Known lag: a `cd` inside a pane fires no hookable event, so a workspace's mapping refreshes only on the next trigger (ADR-0003).
