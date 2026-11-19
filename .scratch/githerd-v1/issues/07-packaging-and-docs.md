@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 06
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
 - [x] README:
   - what githerd is, with a screenshot or text capture of the rail and repo page;
@@ -19,7 +19,7 @@
 - [x] AGENTS.md updated for contributors: layout, test seams, how to run tests (use the `writing-for-agents` skill)
 - [ ] `herdr plugin install` from a clean machine works end to end (manual check, noted in the ticket)
   Needs a human on a clean machine with a live Herdr; agents never run the real `herdr`.
-- [ ] Tag `v0.1.0`; GitHub topic `herdr-plugin` set
+- [x] Tag `v0.1.0`; GitHub topic `herdr-plugin` set
 
 ## Comments
 
@@ -31,3 +31,5 @@ Docs done: `README.md` written, `AGENTS.md` updated for contributors. Left for t
   - A tab-bar command gets `HERDR_BIN_PATH` but no `HERDR_PLUGIN_CONFIG_DIR` or `HERDR_PLUGIN_STATE_DIR`. Herdr has no command that prints the state dir, and the plugin's binary moves on every update.
   - So the README's entry runs the `go install` binary, finds the config dir with `herdr plugin config-dir githerd`, and keeps a state dir of its own. That sync doesn't share the hooks' lock. A repo whose fetch another sync has in flight reads as stale, because git empties `FETCH_HEAD` when a fetch starts, so it can show `⚠` until the next refresh. The README says so.
   - A `sync` action in the manifest running `./bin/githerd herdr sync` would fix this. The entry would become `"$HERDR_BIN_PATH" plugin action invoke githerd.sync >/dev/null`, with the plugin's binary, env and lock.
+
+- Orchestrator: tagged `v0.1.0` and set the `herdr-plugin` topic after the v1 review was resolved. Only the manual `herdr plugin install` check is left, for a human.
