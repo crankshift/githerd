@@ -83,16 +83,15 @@ type Workspace struct {
 // workspaces of the Herdr session.
 func Sync(ctx context.Context, env Env) (Result, error) {
 	var res Result
-	paths, err := readRoots(filepath.Join(env.ConfigDir, rootsFile))
-	if err != nil {
-		return res, err
-	}
+	paths, errs := readRoots(filepath.Join(env.ConfigDir, rootsFile))
+	res.Errs = append(res.Errs, errs...)
 	herdr := cli{bin: env.Bin}
 	snap, err := herdr.snapshot(ctx)
 	if err != nil {
 		return res, err
 	}
-	res.Roots, res.Errs = scan(ctx, paths)
+	res.Roots, errs = scan(ctx, paths)
+	res.Errs = append(res.Errs, errs...)
 
 	seq := uint64(time.Now().UnixMilli())
 	for _, sw := range snap.Workspaces {

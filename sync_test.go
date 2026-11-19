@@ -1,7 +1,9 @@
 package main_test
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +47,101 @@ func TestSyncReportsTheRootSummaryToRootWorkspaces(t *testing.T) {
 		"w2": {"repos": "6/10", "changes": cleared, "stale": cleared},
 		"w3": {"repos": "✓2", "changes": cleared, "stale": cleared},
 	})
+}
+
+// The roots file lists one root per line, with ~ for the home dir; blank
+// lines and # comments are ignored. Each workspace gets the root that
+// contains it.
+func TestSyncReadsTheRootsFile(t *testing.T) {
+	f := gitfixture.New(t)
+	site := f.Clone(f.Remote("site"), "home/projects/site")
+	f.Write(site, "index.html", "<h1>hi</h1>\n")
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Clone(f.Remote("old"), "attic/old")
+	h := newFakeHerdr(t, f)
+	h.roots("# Where my clones live\n" +
+		"~/projects\n" +
+		"\n" +
+		"   " + f.Path("work") + "  \n" +
+		"# " + f.Path("attic") + "\n")
+	h.snapshot(
+		at("projects", f.Path("home/projects")),
+		at("site", site),
+		at("work", f.Path("work")),
+		at("api", api),
+		at("attic", f.Path("attic/old")),
+	)
+
+	h.assertSynced(h.sync(), map[string]tokens{
+		"projects": {"repos": "1/1", "changes": cleared, "stale": cleared},
+		"site":     {"changes": "●1", "repos": cleared, "stale": cleared},
+		"work":     {"repos": "✓1", "changes": cleared, "stale": cleared},
+		"api":      {"changes": cleared, "repos": cleared, "stale": cleared},
+	})
+}
+
+// Hooks run in the plugin root, which moves on every update, so a relative
+// root would mean nothing: it is named on stderr and the others still sync.
+func TestSyncRejectsARelativeRoot(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	h := newFakeHerdr(t, f)
+	h.roots("projects\n" + f.Path("work") + "\n")
+	h.snapshot(at("api", api))
+
+	got := h.sync()
+
+	if got.code != 1 || !strings.Contains(got.stderr, "roots:1: projects: not an absolute path") {
+		t.Errorf("want exit 1 and line 1 of the roots file named on stderr; got %+v", got)
+	}
+	assertTokens(t, tokensByWorkspace(t, h.calls()), map[string]tokens{
+		"api": {"changes": cleared, "repos": cleared, "stale": cleared},
+	})
+}
+
+// A root or a pane cwd reached through a symlink still matches: Herdr may
+// report a cwd as the shell spelled it or as the OS resolved it.
+func TestSyncMatchesPathsThroughSymlinks(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Write(api, "notes.txt", "todo\n")
+	site := f.Clone(f.Remote("site"), "projects/site")
+	f.Write(site, "index.html", "<h1>hi</h1>\n")
+	symlink(t, f.Path("work"), f.Path("work-link"))
+	symlink(t, f.Path("projects"), f.Path("projects-link"))
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work-link") + "\n" + f.Path("projects") + "\n")
+	h.snapshot(at("api", api), at("site", f.Path("projects-link/site")))
+
+	h.assertSynced(h.sync(), map[string]tokens{
+		"api":  {"changes": "●1", "repos": cleared, "stale": cleared},
+		"site": {"changes": "●1", "repos": cleared, "stale": cleared},
+	})
+}
+
+// With no roots configured, a fresh session gets nothing reported.
+func TestSyncReportsNothingWithoutRoots(t *testing.T) {
+	for name, roots := range map[string]*string{
+		"no roots file":    nil,
+		"only comments":    ptr("# ~/work\n\n   \n"),
+		"empty roots file": ptr(""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := gitfixture.New(t)
+			api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+			f.Write(api, "notes.txt", "todo\n")
+			h := newFakeHerdr(t, f)
+			if roots != nil {
+				h.roots(*roots)
+			}
+			h.snapshot(
+				at("w1", f.Path("work")),
+				workspace{id: "w2", tabs: [][]pane{{{cwd: api}}}, tokens: map[string]string{"load": "90"}},
+			)
+
+			h.assertSynced(h.sync(), map[string]tokens{})
+		})
+	}
 }
 
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
@@ -130,4 +227,13 @@ func TestSyncReportsEachMappedWorkspaceItsReposChanges(t *testing.T) {
 		"billing":     {"changes": cleared, "repos": cleared, "stale": cleared},
 		"web":         {"changes": cleared, "repos": cleared, "stale": cleared},
 	})
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
 }
