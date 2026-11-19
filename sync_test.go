@@ -403,6 +403,52 @@ func TestSyncReportsLocalStateBeforeFetching(t *testing.T) {
 	)
 }
 
+// A sync holds the lock through its fetches and second round: a sync
+// triggered meanwhile leaves the mark and exits at once, and the running
+// sync then runs once more, under a later --seq.
+func TestSyncWhileAnotherFetchesLeavesAMarkForIt(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("api", api))
+	stillFetching := func(what string) {
+		t.Helper()
+		for _, call := range f.SSHCalls() {
+			if strings.HasPrefix(call, "outlived the fetch") {
+				t.Errorf("%s only after the running sync's fetch ended", what)
+			}
+		}
+	}
+
+	wait := h.startSync()
+	h.waitForCalls(2) // the snapshot and the first round: the fetch is next
+	got := h.sync("HERDR_PLUGIN_EVENT=workspace.focused")
+	stillFetching("the sync during another returned")
+	if got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("sync during another: want exit 0 and no output; got %+v", got)
+	}
+	if calls := h.peekCalls(); len(calls) != 2 {
+		t.Errorf("the sync during another called herdr: %q", calls[2:])
+	}
+	if got := wait(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("running sync: want exit 0 and no output; got %+v", got)
+	}
+
+	calls := h.calls()
+	if len(calls) != 5 || !reflect.DeepEqual(calls[3], []string{"api", "snapshot"}) {
+		t.Fatalf("want a sync of two rounds, then one of a single round; got %q", calls)
+	}
+	assertRounds(t, calls,
+		map[string]tokens{"api": {"changes": cleared, "repos": cleared, "stale": cleared}},
+		map[string]tokens{"api": {"stale": "⚠", "changes": cleared, "repos": cleared}}, // its fetch failed
+		map[string]tokens{"api": {"stale": "⚠", "changes": cleared, "repos": cleared}}, // the rerun: still stale, not fetched
+	)
+}
+
 // A repo whose fetch failed stays stale, and sync fetches it again only once
 // 15 minutes have passed since the failure. Until then each sync reports it
 // stale from the start and leaves it alone, even if its remote is back.

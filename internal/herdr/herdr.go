@@ -76,7 +76,7 @@ type Root struct {
 // Repo is the state of one repo under a root.
 type Repo struct {
 	status.Repo
-	Stale error  // why its fetch failed, so behind may be out of date; nil when it didn't fail
+	Stale error  // why its last fetch failed, so behind may be out of date; nil when it didn't fail
 	canon string // Dir with symlinks resolved
 }
 
@@ -91,6 +91,10 @@ type Workspace struct {
 // Sync reports the state of every repo under the configured roots to the
 // workspaces of the Herdr session. For an agent status change it does
 // nothing unless the agent turned done or idle.
+//
+// It reports what the repos hold locally first, then fetches the repos due
+// for it with the 15-minute TTL, and reports again to the workspaces whose
+// tokens that changed. The Result holds the state after the fetches.
 //
 // Hooks fire in bursts, so one sync runs at a time, under a lock in the
 // state dir. A sync that finds the lock held leaves a mark and returns at
@@ -172,13 +176,13 @@ func syncOnce(ctx context.Context, env Env) (Result, error) {
 		}
 	}
 
-	sent, errs, err := report(ctx, herdr, env.StateDir, targets, nil)
+	sent, errs, err := reportRound(ctx, herdr, env.StateDir, targets, nil)
 	res.Errs = append(res.Errs, errs...)
 	if err != nil {
 		return res, err
 	}
 	res.Errs = append(res.Errs, fetchDue(ctx, res.Roots, dirs)...)
-	_, errs, err = report(ctx, herdr, env.StateDir, targets, sent)
+	_, errs, err = reportRound(ctx, herdr, env.StateDir, targets, sent)
 	res.Errs = append(res.Errs, errs...)
 	return res, err
 }
@@ -202,11 +206,11 @@ func (t target) tokens() map[string]string {
 	return map[string]string{}
 }
 
-// report sends each target its tokens, all under one new --seq, and
+// reportRound sends each target its tokens, all under one new --seq, and
 // returns the tokens of every target. With sent, the tokens of an earlier
 // round, it skips the targets whose tokens are unchanged, and takes no
 // --seq when none changed. A report Herdr refuses is among the errs.
-func report(ctx context.Context, herdr cli, stateDir string, targets []target, sent map[string]map[string]string) (now map[string]map[string]string, errs []error, err error) {
+func reportRound(ctx context.Context, herdr cli, stateDir string, targets []target, sent map[string]map[string]string) (now map[string]map[string]string, errs []error, err error) {
 	now = map[string]map[string]string{}
 	var changed []target
 	for _, t := range targets {

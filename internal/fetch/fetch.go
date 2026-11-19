@@ -32,7 +32,7 @@ var errLastFailed = errors.New("last fetch failed")
 
 // Options says which repos Run fetches and how long each may take.
 type Options struct {
-	TTL     time.Duration // skip a repo fetched less than TTL ago
+	TTL     time.Duration // skip a repo fetched, or whose fetch failed, less than TTL ago
 	Force   bool          // fetch every repo, whatever the TTL
 	Timeout time.Duration // per repo; zero means DefaultTimeout
 }
