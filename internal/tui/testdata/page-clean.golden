@@ -1,0 +1,24 @@
+│repos/acme/docs  main → origin/main  ✓                                                              │
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│Changes 0                             │branch main                                                  │
+│  nothing to commit                   │tracks origin/main  up to date                               │
+│To push 0                             │                                                             │
+│  nothing to push                     │Recent commits                                               │
+│To pull 0                             │  5eed5ed Document the login flow              Ada Example 2d│
+│  nothing to pull                     │  d15ea5e Fix broken links                     Ada Example 1w│
+│Branches 1                            │  c0ffee1 Initial commit                       Ada Example 1y│
+│  * main                             =│                                                             │ selected
+│Log                                   │                                                             │
+│  5eed5ed Document the login flow   2d│                                                             │
+│  d15ea5e Fix broken links          1w│                                                             │
+│  c0ffee1 Initial commit            1y│                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│                                      │                                                             │
+│────────────────────────────────────────────────────────────────────────────────────────────────────│
+│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit                                             │

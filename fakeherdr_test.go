@@ -108,6 +108,9 @@ func runFakeHerdr(dir string, args []string) int {
 	case len(args) > 2 && args[0] == "pane" && args[1] == "resize":
 		fmt.Println(`{"id":"cli:pane:resize","result":{"type":"pane_resize","resize":{"changed":true}}}`)
 		return 0
+	case len(args) > 2 && args[0] == "pane" && args[1] == "zoom":
+		fmt.Println(`{"id":"cli:pane:zoom","result":{"type":"pane_zoom","zoom":{"changed":true,"zoom_changed":true,"focus_changed":false}}}`)
+		return 0
 	}
 	fmt.Fprintf(os.Stderr, "fake herdr: unexpected command %q\n", args)
 	return 2

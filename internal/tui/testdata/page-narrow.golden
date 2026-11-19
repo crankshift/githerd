@@ -1,0 +1,16 @@
+│repos/acme/api  feature/login → origin/feature/login  ●3 ⇡2 │
+│────────────────────────────────────────────────────────────│
+│Changes 3                     │src/routes.go           +3 −1│
+│  M  src/routes.go            │staged                       │ selected
+│   M src/auth.go              │@@ -1,7 +1,8 @@              │
+│  ?? src/auth_test.go         │ package routes              │
+│To push 2                     │                             │
+│  b81e0d4 Validate login p… 2h│ import "example.com/api/aut…│
+│  3f2a9c1 Add session refr… 5h│                             │
+│To pull 0                     │ func Register(r *Router) {  │
+│  nothing to pull             │     r.Post("/login", auth.L…│
+│Branches 5                    │+    r.Post("/session/refres…│
+│  * feature/login           ⇡2│ }                           │
+│    fix/token-e… ∅ no upstream│@@ -40,3 +41,4 @@ func Regis…│
+│────────────────────────────────────────────────────────────│
+│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit     │

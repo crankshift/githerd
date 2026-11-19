@@ -6,6 +6,7 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/crankshift/githerd/internal/status"
@@ -14,7 +15,8 @@ import (
 // RefreshEvery is how long the rail waits between refreshes.
 const RefreshEvery = 30 * time.Second
 
-// Msg is what Update takes: a Key, a Tick, a Resize or a Loaded.
+// Msg is what Update takes: a Key, a Tick, a Resize, or the answer to a
+// command: a Loaded, a PageLoaded, a DetailLoaded or a Failed.
 type Msg any
 
 // Key is a key the user pressed: the character it types, such as "j" or
@@ -47,6 +49,10 @@ type Loaded struct {
 	Problems []string // what went wrong while reading, such as a repo git could not read
 	Refresh  bool     // it answers a Refresh
 }
+
+// Failed says a request to Herdr that the terminal layer ran for the model,
+// such as a Zoom, failed, and why. It shows until the next refresh.
+type Failed struct{ Err string }
 
 // Root is a configured root and its repos.
 type Root struct {
@@ -161,10 +167,15 @@ func Update(m Model, msg Msg) (Model, []Cmd) {
 		}
 	case Loaded:
 		m, cmds = loaded(m, msg)
+		if msg.Refresh && m.page.open() {
+			m, cmds = m.reloadPage(), append(cmds, LoadPage{Dir: m.page.dir})
+		}
 	case PageLoaded:
 		m = m.pageLoaded(msg)
 	case DetailLoaded:
 		m = m.detailLoaded(msg)
+	case Failed:
+		m.problems = append(slices.Clip(m.problems), msg.Err)
 	case Key:
 		if msg == KeyCtrlC {
 			return m, []Cmd{Quit{}}

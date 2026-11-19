@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/crankshift/githerd/internal/repopage"
 	"github.com/crankshift/githerd/internal/tui"
@@ -308,5 +309,156 @@ func TestRepoPageScrollsTheDiffWithShiftJK(t *testing.T) {
 		if got := pageSelected(m); !strings.HasPrefix(got, "M  src/routes.go") {
 			t.Errorf("after %q, the list is on %q, want it still on src/routes.go", c.keys, got)
 		}
+	}
+}
+
+// The page of a clean repo says there is nothing to commit, push or pull,
+// and starts on its branch.
+func TestRepoPageOfACleanRepo(t *testing.T) {
+	docs := "/work/repos/acme/docs"
+	m := paneRail(t, docs, fetchedWork())
+	m, _ = press(m, tui.KeyEnter)
+	m, cmds := tui.Update(m, tui.PageLoaded{Dir: docs, Page: repopage.Page{
+		Upstream: "origin/main",
+		Branches: []repopage.Branch{{Name: "main", Ref: "refs/heads/main", Current: true, Upstream: "origin/main"}},
+		Log: []repopage.Commit{
+			commit("5eed5ed", "Document the login flow", 2*24*time.Hour),
+			commit("d15ea5e", "Fix broken links", 9*24*time.Hour),
+			commit("c0ffee1", "Initial commit", 400*24*time.Hour),
+		},
+	}})
+	main := repopage.Item{Branch: "refs/heads/main"}
+	assertCmds(t, "once the page is loaded", cmds, tui.LoadDetail{Dir: docs, Item: main})
+	m, _ = tui.Update(m, tui.DetailLoaded{Dir: docs, Item: main, Detail: repopage.Detail{Commits: []repopage.Commit{
+		commit("5eed5ed", "Document the login flow", 2*24*time.Hour),
+		commit("d15ea5e", "Fix broken links", 9*24*time.Hour),
+		commit("c0ffee1", "Initial commit", 400*24*time.Hour),
+	}}})
+	assertView(t, m, 100, 24, "page-clean")
+}
+
+// In a pane too narrow for them, as when the page shows unzoomed, diff
+// lines leave out their line numbers.
+func TestRepoPageLeavesOutLineNumbersWhenNarrow(t *testing.T) {
+	m := apiPageModel(t)
+	m, _ = tui.Update(m, tui.DetailLoaded{Dir: apiDir, Item: repopage.Item{Change: apiPage().Changes[0]}, Detail: routesDiff()})
+	m, _ = tui.Update(m, tui.Resize{Width: 60, Height: 16})
+
+	assertView(t, m, 60, 16, "page-narrow")
+}
+
+// The page's View fills exactly width × height at any size, a tiny pane
+// included, while loading, loaded, and when reading failed.
+func TestRepoPageViewFillsItsSizeExactly(t *testing.T) {
+	loading := paneRail(t, apiDir, fetchedWork())
+	loading, _ = press(loading, tui.KeyEnter)
+	loaded := apiPageModel(t)
+	loaded, _ = tui.Update(loaded, tui.DetailLoaded{Dir: apiDir, Item: repopage.Item{Change: apiPage().Changes[0]}, Detail: routesDiff()})
+	loaded, _ = tui.Update(loaded, tui.Loaded{At: t0, Roots: []tui.Root{fetchedWork()}, Refresh: true, Problems: []string{"a problem"}})
+	failed, _ := tui.Update(loading, tui.PageLoaded{Dir: apiDir, Err: "git status: not a git repository"})
+	for name, m := range map[string]tui.Model{"loading": loading, "loaded": loaded, "failed": failed} {
+		for w := 0; w <= 40; w++ {
+			for h := 0; h <= 8; h++ {
+				screen := tui.View(m, w, h)
+				if len(screen) != h {
+					t.Fatalf("%s at %d×%d: %d lines", name, w, h, len(screen))
+				}
+				for i, l := range screen {
+					if got := utf8.RuneCountInString(l.Text()); got != w {
+						t.Fatalf("%s at %d×%d: line %d is %d wide: %q", name, w, h, i, got, l.Text())
+					}
+				}
+			}
+		}
+	}
+}
+
+// While the page is open, each refresh of the rail reads the page again.
+// The cursor stays on its line wherever the line moved, or keeps its place
+// when the line is gone; what shows beside it stays until it is read
+// again. Answers for a page no longer open are dropped.
+func TestRepoPageReadsTheRepoAgainWithEachRefresh(t *testing.T) {
+	m := apiPageModel(t)
+	validate := repopage.Item{Commit: apiPage().ToPush[0].Hash}
+	m, _ = press(m, "j", "j", "j")
+	m, _ = tui.Update(m, tui.DetailLoaded{Dir: apiDir, Item: validate, Detail: repopage.Detail{Message: "Validate login payload"}})
+
+	after := fetchedWork()
+	after.Repos[1].Uncommitted = 1 // two changes were committed
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(30 * time.Second)})
+	m, cmds := tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{after}, Refresh: true})
+	assertCmds(t, "after a refresh", cmds, tui.LoadPage{Dir: apiDir})
+	if got := tui.View(m, 100, 24)[0].Text(); !strings.HasPrefix(got, "repos/acme/api  feature/login → origin/feature/login  ●1 ⇡2 ") {
+		t.Errorf("after a refresh, the header shows %q, want the new state", got)
+	}
+
+	p := apiPage()
+	p.Changes = p.Changes[:1]
+	m, cmds = tui.Update(m, tui.PageLoaded{Dir: apiDir, Page: p})
+	assertCmds(t, "read again", cmds, tui.LoadDetail{Dir: apiDir, Item: validate})
+	if got := pageSelected(m); !strings.HasPrefix(got, "b81e0d4 Validate login payload") {
+		t.Errorf("read again, the cursor is on %q, want it still on its commit", got)
+	}
+	if got, want := beside(m, 5), "Validate login payload"; got != want {
+		t.Errorf("read again, beside the commit shows %q, want %q until it is read again", got, want)
+	}
+
+	p.ToPush, p.Ahead = p.ToPush[1:], 1 // pushed
+	m, cmds = tui.Update(m, tui.PageLoaded{Dir: apiDir, Page: p})
+	assertCmds(t, "with the commit gone", cmds, tui.LoadDetail{Dir: apiDir, Item: repopage.Item{Commit: p.ToPush[0].Hash}})
+	if got := pageSelected(m); !strings.HasPrefix(got, "3f2a9c1 Add session refresh") {
+		t.Errorf("with its commit gone, the cursor is on %q, want the line now in its place", got)
+	}
+
+	before := tui.View(m, 100, 24).String()
+	m, cmds = tui.Update(m, tui.DetailLoaded{Dir: "/work/repos/acme/billing", Item: repopage.Item{Commit: p.ToPush[0].Hash}, Detail: repopage.Detail{Message: "Other"}})
+	assertCmds(t, "an answer for another repo", cmds)
+	if got := tui.View(m, 100, 24).String(); got != before {
+		t.Errorf("an answer for another repo changed the page:\n%s", got)
+	}
+	m, _ = press(m, tui.KeyEsc)
+	before = tui.View(m, 100, 24).String()
+	m, cmds = tui.Update(m, tui.PageLoaded{Dir: apiDir, Page: apiPage()})
+	assertCmds(t, "a page read after Esc", cmds)
+	if got := tui.View(m, 100, 24).String(); got != before {
+		t.Errorf("a page read after Esc changed the rail:\n%s", got)
+	}
+}
+
+// f fetches every repo of the root from the page too, and q closes the
+// rail.
+func TestRepoPageFetchesWithFAndQuitsWithQ(t *testing.T) {
+	m := apiPageModel(t)
+
+	m, cmds := press(m, "f")
+	assertCmds(t, "f", cmds, tui.Refresh{Force: dirs(fetchedWork())})
+	if got := tui.View(m, 100, 24)[0].Text(); !strings.HasSuffix(got, " fetching…") {
+		t.Errorf("during a forced refresh, the page's header shows %q, want it to end in fetching…", got)
+	}
+	_, cmds = press(m, "q")
+	assertCmds(t, "q", cmds, tui.Quit{})
+}
+
+// What went wrong shows: reading the page in the list, reading a line's
+// detail beside it, and a request to Herdr, such as a zoom, above the keys.
+func TestRepoPageShowsWhatWentWrong(t *testing.T) {
+	m := paneRail(t, apiDir, fetchedWork())
+	m, _ = press(m, tui.KeyEnter)
+
+	failed, _ := tui.Update(m, tui.PageLoaded{Dir: apiDir, Err: "git status: index file corrupt"})
+	if got, want := strings.TrimSpace(strings.SplitN(tui.View(failed, 100, 24)[2].Text(), "│", 2)[0]), "⚠ git status: index file corrupt"; got != want {
+		t.Errorf("when the page can't be read, the list shows %q, want %q", got, want)
+	}
+
+	m, _ = tui.Update(m, tui.PageLoaded{Dir: apiDir, Page: apiPage()})
+	m, _ = tui.Update(m, tui.DetailLoaded{Dir: apiDir, Item: repopage.Item{Change: apiPage().Changes[0]}, Err: "git diff: bad object"})
+	if got, want := beside(m, 4), "⚠ git diff: bad object"; got != want {
+		t.Errorf("when a diff can't be read, beside it shows %q, want %q", got, want)
+	}
+
+	m, cmds := tui.Update(m, tui.Failed{Err: "herdr pane zoom: pane not found"})
+	assertCmds(t, "a failed request", cmds)
+	if got, want := strings.TrimSpace(tui.View(m, 100, 24)[21].Text()), "⚠ herdr pane zoom: pane not found"; got != want {
+		t.Errorf("after a failed request, the line above the keys shows %q, want %q", got, want)
 	}
 }

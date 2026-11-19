@@ -15,6 +15,7 @@ import (
 	"github.com/crankshift/githerd/internal/discovery"
 	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/herdr"
+	"github.com/crankshift/githerd/internal/repopage"
 	"github.com/crankshift/githerd/internal/status"
 	"github.com/crankshift/githerd/internal/term"
 	"github.com/crankshift/githerd/internal/tui"
@@ -55,6 +56,7 @@ type rail struct {
 	term *term.Terminal
 	msgs chan tui.Msg // keys, and the answers of commands run in the background
 	work sync.WaitGroup
+	turn chan struct{} // closed when the last Herdr request asked for has run
 }
 
 // run runs the rail until the model asks to quit or ctx ends. pane is the
@@ -78,7 +80,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	defer signal.Stop(winch)
 
 	w, h, _ := r.term.Size()
-	m, cmds := tui.New(tui.Options{Now: time.Now(), Cwd: canonical(cwd), RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir))})
+	m, cmds := tui.New(tui.Options{Now: time.Now(), Cwd: canonical(cwd), Pane: pane, RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir))})
 	m, _ = tui.Update(m, tui.Resize{Width: w, Height: h})
 	for {
 		for _, c := range cmds {
@@ -95,6 +97,23 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 				})
 			case tui.Refresh:
 				r.background(ctx, func() tui.Msg { return refresh(ctx, r.env, c.Force) })
+			case tui.LoadPage:
+				r.background(ctx, func() tui.Msg {
+					p, err := repopage.Read(ctx, c.Dir)
+					return tui.PageLoaded{Dir: c.Dir, Page: p, Err: errText(err)}
+				})
+			case tui.LoadDetail:
+				r.background(ctx, func() tui.Msg {
+					d, err := repopage.Show(ctx, c.Dir, c.Item)
+					return tui.DetailLoaded{Dir: c.Dir, Item: c.Item, Detail: d, Err: errText(err)}
+				})
+			case tui.Zoom:
+				r.inTurn(ctx, func() tui.Msg {
+					if err := herdr.Zoom(ctx, r.env, c.Pane, string(c.Mode)); err != nil {
+						return tui.Failed{Err: err.Error()}
+					}
+					return nil
+				})
 			}
 		}
 		r.term.Draw(tui.View(m, w, h).ANSI())
@@ -112,17 +131,40 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	}
 }
 
-// background runs f on its own and hands its answer to the model.
+// background runs f on its own and hands its answer, if it has one, to the
+// model.
 func (r *rail) background(ctx context.Context, f func() tui.Msg) {
 	r.work.Add(1)
 	go func() {
 		defer r.work.Done()
 		msg := f()
+		if msg == nil {
+			return
+		}
 		select {
 		case r.msgs <- msg:
 		case <-ctx.Done():
 		}
 	}()
+}
+
+// inTurn runs the Herdr request f on its own once the requests asked for
+// before it have run, so they reach Herdr in the order the model made
+// them: a zoom in and out in quick succession must not end zoomed in.
+func (r *rail) inTurn(ctx context.Context, f func() tui.Msg) {
+	prev, done := r.turn, make(chan struct{})
+	r.turn = done
+	r.background(ctx, func() tui.Msg {
+		defer close(done)
+		if prev != nil {
+			select {
+			case <-prev:
+			case <-ctx.Done():
+				return nil
+			}
+		}
+		return f()
+	})
 }
 
 // wait gives the commands still running, whose context has ended, a moment
@@ -253,6 +295,14 @@ func tildePath(path string) string {
 		return "~" + string(filepath.Separator) + rest
 	}
 	return path
+}
+
+// errText returns the message of err, or "" when it is nil.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func messages(errs []error) []string {

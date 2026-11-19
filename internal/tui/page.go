@@ -140,6 +140,19 @@ func (m Model) pageLoaded(msg PageLoaded) Model {
 	return m
 }
 
+// reloadPage takes in the repo's state from a refresh of the rail, which
+// reads the page again too.
+func (m Model) reloadPage() Model {
+	if r := m.shown(); r != nil {
+		for _, repo := range r.Repos {
+			if repo.Dir == m.page.dir {
+				m.page.repo = repo
+			}
+		}
+	}
+	return m
+}
+
 // detailLoaded takes in what was read beside an item.
 func (m Model) detailLoaded(msg DetailLoaded) Model {
 	p := m.page
@@ -695,6 +708,9 @@ func (m Model) pageHeader(w int) Line {
 		right = []Span{{Text: "⚠ fetch failed", Style: Style{Color: Red}}}
 	case !r.FetchedAt.IsZero():
 		right = []Span{{Text: "fetched " + ago(m.now.Sub(r.FetchedAt)), Style: Style{Dim: true}}}
+	}
+	if width(spansText(left))+1+width(spansText(right)) > w {
+		right = nil // the repo's state matters more
 	}
 	return Line{Spans: leftRight(left, right, w)}
 }

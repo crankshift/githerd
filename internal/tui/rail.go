@@ -166,7 +166,7 @@ func railView(m Model, w, h int) Screen {
 		return noRootsView(m, w, h)
 	}
 	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
-	footer := Screen{rule(w), keys(w, "/", "filter", "f", "fetch", "q", "quit")}
+	footer := Screen{rule(w), keys(w, "enter", "page", "/", "filter", "f", "fetch", "q", "quit")}
 	if len(m.problems) > 0 {
 		footer = append(Screen{m.problemLine(w)}, footer...)
 	}
