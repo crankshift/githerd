@@ -37,10 +37,41 @@ const (
 // ws.
 func fakeOpenedPane(ws string) string { return ws + ":p9" }
 
+// fakeCreatedWorkspace is the id of the workspace `workspace create` creates.
+const fakeCreatedWorkspace = "w9"
+
+// fakeSplitPane is the id of the pane `pane split` opens beside pane.
+func fakeSplitPane(pane string) string {
+	ws, _, _ := strings.Cut(pane, ":")
+	return ws + ":pA"
+}
+
+// flag returns the value of flag name in args, or "" when it is not there.
+func flag(args []string, name string) string {
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// isClosed reports whether workspace id was closed since the snapshot.
+func isClosed(dir, id string) bool {
+	closed, _ := os.ReadFile(filepath.Join(dir, fakeClosedFile))
+	for _, c := range strings.Fields(string(closed)) {
+		if c == id {
+			return true
+		}
+	}
+	return false
+}
+
 // runFakeHerdr is the fake herdr. It records its argv, serves the canned
 // snapshot, and accepts every workspace report-metadata call silently, as
 // herdr does on success, unless the workspace was closed. It opens, focuses
-// and resizes plugin panes, answering as Herdr 0.9.5 does.
+// and resizes plugin panes, focuses and creates workspaces, splits panes
+// and runs commands in them, answering as Herdr 0.9.5 does.
 func runFakeHerdr(dir string, args []string) int {
 	line, _ := json.Marshal(args)
 	calls, err := os.OpenFile(filepath.Join(dir, fakeCallsFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -72,13 +103,35 @@ func runFakeHerdr(dir string, args []string) int {
 		fmt.Printf(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":%s}}`+"\n", bytes.TrimSpace(snap))
 		return 0
 	case len(args) > 2 && args[0] == "workspace" && args[1] == "report-metadata":
-		closed, _ := os.ReadFile(filepath.Join(dir, fakeClosedFile))
-		for _, id := range strings.Fields(string(closed)) {
-			if id == args[2] {
-				fmt.Fprintf(os.Stderr, `{"id":"cli:request","error":{"code":"workspace_not_found","message":"workspace %s not found"}}`+"\n", id)
-				return 1
-			}
+		if isClosed(dir, args[2]) {
+			fmt.Fprintf(os.Stderr, `{"id":"cli:request","error":{"code":"workspace_not_found","message":"workspace %s not found"}}`+"\n", args[2])
+			return 1
 		}
+		return 0
+	case len(args) == 3 && args[0] == "workspace" && args[1] == "focus":
+		if isClosed(dir, args[2]) {
+			fmt.Fprintf(os.Stderr, `{"id":"cli:workspace:focus","error":{"code":"workspace_not_found","message":"workspace %s not found"}}`+"\n", args[2])
+			return 1
+		}
+		fmt.Printf(`{"id":"cli:workspace:focus","result":{"type":"workspace_info","workspace":{"workspace_id":%q,"number":1,"label":"ws-%s",`+
+			`"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"%s:t1","agent_status":"idle"}}}`+"\n", args[2], args[2], args[2])
+		return 0
+	case len(args) > 2 && args[0] == "workspace" && args[1] == "create":
+		ws := fakeCreatedWorkspace
+		fmt.Printf(`{"id":"cli:workspace:create","result":{"type":"workspace_created","workspace":{"workspace_id":%q,"number":3,"label":%q,`+
+			`"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"%s:t1","agent_status":"unknown"},`+
+			`"tab":{"tab_id":"%s:t1","workspace_id":%q,"number":1,"label":"shell","focused":true,"pane_count":1,"agent_status":"unknown"},`+
+			`"root_pane":{"pane_id":"%s:p1","terminal_id":"term-%s:p1","workspace_id":%q,"tab_id":"%s:t1","focused":true,"cwd":%q,"agent_status":"unknown","revision":1}}}`+"\n",
+			ws, flag(args, "--label"), ws, ws, ws, ws, ws, ws, ws, flag(args, "--cwd"))
+		return 0
+	case len(args) > 2 && args[0] == "pane" && args[1] == "split":
+		target := flag(args, "--pane")
+		ws, _, _ := strings.Cut(target, ":")
+		fmt.Printf(`{"id":"cli:pane:split","result":{"type":"pane_info","pane":{"pane_id":%q,"terminal_id":"term-%s","workspace_id":%q,`+
+			`"tab_id":"%s:t1","focused":true,"cwd":%q,"agent_status":"unknown","revision":1}}}`+"\n",
+			fakeSplitPane(target), fakeSplitPane(target), ws, ws, flag(args, "--cwd"))
+		return 0
+	case len(args) > 3 && args[0] == "pane" && args[1] == "run":
 		return 0
 	case len(args) > 2 && args[0] == "pane" && args[1] == "report-metadata":
 		return 0
