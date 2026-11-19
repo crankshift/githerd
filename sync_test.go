@@ -403,6 +403,48 @@ func TestSyncReportsLocalStateBeforeFetching(t *testing.T) {
 	)
 }
 
+// A repo whose fetch failed stays stale, and sync fetches it again only once
+// 15 minutes have passed since the failure. Until then each sync reports it
+// stale from the start and leaves it alone, even if its remote is back.
+func TestSyncRetriesAStaleRepoOnlyAfterTheTTL(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH() // every host refuses the connection
+	apiRemote := f.Remote("api")
+	api := f.Clone(apiRemote, "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@git.example.com/acme/api.git")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("root", f.Path("work")), at("api", api))
+	fresh := map[string]tokens{
+		"root": {"repos": "✓1", "changes": cleared, "stale": cleared},
+		"api":  {"changes": cleared, "repos": cleared, "stale": cleared},
+	}
+	stale := map[string]tokens{
+		"root": {"repos": "✓1", "stale": "⚠1", "changes": cleared},
+		"api":  {"stale": "⚠", "changes": cleared, "repos": cleared},
+	}
+	sync := func() [][]string {
+		t.Helper()
+		if got := h.sync(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+			t.Fatalf("want exit 0 and no output; got %+v", got)
+		}
+		return h.calls()
+	}
+
+	assertRounds(t, sync(), fresh, stale)
+
+	f.Git(api, "remote", "set-url", "origin", apiRemote) // the remote is back
+	f.Backdate(api, 14*time.Minute)
+	assertRounds(t, sync(), stale)
+
+	f.Backdate(api, 16*time.Minute)
+	assertRounds(t, sync(), stale, fresh)
+	if calls := f.SSHCalls(); len(calls) != 1 {
+		t.Errorf("want one fetch over ssh, the first; got %q", calls)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.

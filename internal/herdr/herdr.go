@@ -234,12 +234,10 @@ func report(ctx context.Context, herdr cli, stateDir string, targets []target, s
 // fetched, updating the repos of roots in place: their state, and whether
 // they are stale.
 func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
-	stale := map[string]error{}
+	outcomes := fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL})
+	stale := staleByDir(outcomes)
 	var fetched []string
-	for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL}) {
-		if o.Err != nil {
-			stale[o.Dir] = o.Err
-		}
+	for _, o := range outcomes {
 		if o.Fetched {
 			fetched = append(fetched, o.Dir)
 		}
@@ -282,6 +280,7 @@ func scan(ctx context.Context, paths []string) ([]Root, []string, []error) {
 		}
 	}
 
+	stale := staleByDir(fetch.Last(ctx, dirs))
 	repos, readErrs := status.ReadAll(ctx, dirs)
 	errs = append(errs, readErrs...)
 	byDir := map[string]status.Repo{}
@@ -294,11 +293,22 @@ func scan(ctx context.Context, paths []string) ([]Root, []string, []error) {
 		roots[i] = Root{Path: path, canon: canonical(path)}
 		for _, dir := range found[i] {
 			if r, ok := byDir[dir]; ok { // an unreadable repo is left out
-				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, canon: underCanon(roots[i], dir)})
+				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, Stale: stale[dir], canon: underCanon(roots[i], dir)})
 			}
 		}
 	}
 	return roots, dirs, errs
+}
+
+// staleByDir returns why each stale repo among outcomes is stale, by dir.
+func staleByDir(outcomes []fetch.Outcome) map[string]error {
+	stale := map[string]error{}
+	for _, o := range outcomes {
+		if o.Err != nil {
+			stale[o.Dir] = o.Err
+		}
+	}
+	return stale
 }
 
 // underCanon returns dir, which lies under root, with symlinks resolved.
