@@ -8,6 +8,7 @@ package gitfixture
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +18,11 @@ import (
 
 // Fixture is a temp dir holding bare remotes, scratch clones and a root.
 type Fixture struct {
-	t    testing.TB
-	dir  string
-	home string
-	env  []string
+	t      testing.TB
+	dir    string
+	home   string
+	env    []string
+	pushes int // scratch clones made by PushElsewhere
 }
 
 // New creates an empty fixture in a fresh temp dir.
@@ -89,6 +91,16 @@ func (f *Fixture) Remote(name string) string {
 	return bare
 }
 
+// Init creates a repo with no remote and no commits at path, given relative
+// to the fixture dir, and returns its absolute path.
+func (f *Fixture) Init(path string) string {
+	f.t.Helper()
+	dst := f.Path(path)
+	f.mkdir(dst)
+	f.Git(dst, "init", "--quiet", "--initial-branch=main")
+	return dst
+}
+
 // Clone clones remote into path, given relative to the fixture dir, and
 // returns the clone's absolute path.
 func (f *Fixture) Clone(remote, path string) string {
@@ -97,6 +109,19 @@ func (f *Fixture) Clone(remote, path string) string {
 	f.mkdir(filepath.Dir(dst))
 	f.Git(f.dir, "clone", "--quiet", remote, dst)
 	return dst
+}
+
+// PushElsewhere adds n commits to branch of remote from a scratch clone, as
+// a teammate would, so existing clones fall behind once they fetch.
+func (f *Fixture) PushElsewhere(remote, branch string, n int) {
+	f.t.Helper()
+	f.pushes++
+	other := f.Path(fmt.Sprintf("scratch/teammate-%d", f.pushes))
+	f.Git(f.dir, "clone", "--quiet", "--branch", branch, remote, other)
+	for i := 1; i <= n; i++ {
+		f.Commit(other, fmt.Sprintf("teammate-%d.txt", i), "change\n", fmt.Sprintf("Teammate change %d", i))
+	}
+	f.Git(other, "push", "--quiet", "origin", branch)
 }
 
 // Write writes content to file inside repo, creating parent dirs.

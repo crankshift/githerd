@@ -95,8 +95,12 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 		if upstream == "" {
 			upstream = "-"
 		}
+		branch := r.Branch
+		if r.Detached != "" {
+			branch = r.Detached
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			relPath(root, r.Dir), r.Branch, r.Uncommitted, r.Ahead, r.Behind, upstream, "")
+			relPath(root, r.Dir), branch, r.Uncommitted, r.Ahead, r.Behind, upstream, note(r))
 	}
 	tw.Flush()
 	for _, line := range strings.SplitAfter(buf.String(), "\n") {
@@ -105,6 +109,17 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 		}
 	}
 	fmt.Fprintf(w, "%d of %d repos need attention\n", attention, len(repos))
+}
+
+// note names the states of r that the number columns don't show.
+func note(r status.Repo) string {
+	switch {
+	case r.Detached != "":
+		return "detached"
+	case r.NoUpstream():
+		return "no upstream"
+	}
+	return ""
 }
 
 // relPath returns dir relative to root, with forward slashes.

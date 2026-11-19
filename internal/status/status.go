@@ -7,23 +7,32 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
 // Repo is the state of one repo.
 type Repo struct {
 	Dir         string // absolute path of the repo
-	Branch      string // current branch
+	Branch      string // current branch; empty when detached
+	Detached    string // short commit HEAD points at when detached; empty on a branch
 	Upstream    string // upstream of the current branch, such as origin/main; empty when there is none
 	Uncommitted int    // porcelain entries in the working tree and index, untracked files included
-	Ahead       int    // commits the current branch has that its upstream lacks
-	Behind      int    // commits the upstream has that the current branch lacks, as of the last fetch
+	// Ahead is the number of commits the current branch has that its
+	// upstream lacks. With no upstream, it counts the commits that are on no
+	// remote branch.
+	Ahead  int
+	Behind int // commits the upstream has that the current branch lacks, as of the last fetch
 }
 
+// NoUpstream reports whether the current branch has no upstream branch. A
+// detached repo is never no upstream, because it has no branch.
+func (r Repo) NoUpstream() bool { return r.Detached == "" && r.Upstream == "" }
+
 // NeedsAttention reports whether the repo is uncommitted, ahead, behind or
-// no upstream.
+// no upstream. Detached alone does not count.
 func (r Repo) NeedsAttention() bool {
-	return r.Uncommitted > 0 || r.Ahead > 0 || r.Behind > 0 || r.Upstream == ""
+	return r.Uncommitted > 0 || r.Ahead > 0 || r.Behind > 0 || r.NoUpstream()
 }
 
 // Read returns the state of the repo in dir.
@@ -33,6 +42,8 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 		return Repo{}, err
 	}
 	r := Repo{Dir: dir}
+	var oid string
+	tracked := false // the upstream exists, so ahead and behind are known
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		line := sc.Text()
@@ -43,17 +54,55 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 		}
 		key, value, _ := strings.Cut(header, " ")
 		switch key {
+		case "branch.oid":
+			oid = value
 		case "branch.head":
 			r.Branch = value
 		case "branch.upstream":
 			r.Upstream = value
 		case "branch.ab":
+			tracked = true
 			if _, err := fmt.Sscanf(value, "+%d -%d", &r.Ahead, &r.Behind); err != nil {
 				return Repo{}, fmt.Errorf("%s: parsing %q: %v", dir, line, err)
 			}
 		}
 	}
-	return r, sc.Err()
+	if err := sc.Err(); err != nil {
+		return Repo{}, err
+	}
+
+	switch {
+	case r.Branch == "(detached)":
+		r.Branch = ""
+		short, err := git(ctx, dir, "rev-parse", "--short", oid)
+		if err != nil {
+			return Repo{}, err
+		}
+		r.Detached = strings.TrimSpace(string(short))
+	case !tracked:
+		// No upstream, or one whose remote branch is gone: count what
+		// would be lost if this clone disappeared.
+		r.Upstream = ""
+		if oid != "(initial)" {
+			if r.Ahead, err = count(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); err != nil {
+				return Repo{}, err
+			}
+		}
+	}
+	return r, nil
+}
+
+// count runs a git command that prints one number.
+func count(ctx context.Context, dir string, args ...string) (int, error) {
+	out, err := git(ctx, dir, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("%s: git %s: %v", dir, args[0], err)
+	}
+	return n, nil
 }
 
 // git runs git in dir without taking optional locks, so it never competes
