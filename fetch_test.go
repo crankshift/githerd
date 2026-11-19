@@ -44,27 +44,58 @@ func TestStatusFetchSkipsReposFetchedWithinTheTTL(t *testing.T) {
 			f.PushElsewhere(remote, "main", 1)
 		}
 	}
-	root := f.Path("work")
-	status := func(args ...string) map[string]int {
+	behind := func(args ...string) map[string]string {
 		t.Helper()
-		return behindByPath(t, githerd(t, f.Env(), root, append([]string{"status", "--json"}, args...)...))
+		got := githerd(t, f.Env(), f.Path("work"), append([]string{"status", "--json"}, args...)...)
+		return field(t, got, "behind")
 	}
 
 	pushToAll()
-	assertBehind(t, status("--fetch"), map[string]int{
-		"repos/acme/api": 0, "repos/acme/docs": 1, "repos/acme/web": 1,
+	assertField(t, "behind", behind("--fetch"), map[string]string{
+		"repos/acme/api": "0", "repos/acme/docs": "1", "repos/acme/web": "1",
 	})
-	assertBehind(t, status("--fetch", "--ttl", "2m"), map[string]int{
-		"repos/acme/api": 1, "repos/acme/docs": 1, "repos/acme/web": 1,
+	assertField(t, "behind", behind("--fetch", "--ttl", "2m"), map[string]string{
+		"repos/acme/api": "1", "repos/acme/docs": "1", "repos/acme/web": "1",
 	})
 
 	pushToAll()
-	assertBehind(t, status("--fetch"), map[string]int{
-		"repos/acme/api": 1, "repos/acme/docs": 1, "repos/acme/web": 1,
+	assertField(t, "behind", behind("--fetch"), map[string]string{
+		"repos/acme/api": "1", "repos/acme/docs": "1", "repos/acme/web": "1",
 	})
-	assertBehind(t, status("--fetch", "--force"), map[string]int{
-		"repos/acme/api": 2, "repos/acme/docs": 2, "repos/acme/web": 2,
+	assertField(t, "behind", behind("--fetch", "--force"), map[string]string{
+		"repos/acme/api": "2", "repos/acme/docs": "2", "repos/acme/web": "2",
 	})
+}
+
+// Nothing is fetched for a detached HEAD, a branch with no upstream, a repo
+// with no remote at all, or a branch whose upstream is another local branch.
+func TestStatusFetchSkipsReposWithNoUpstreamRemote(t *testing.T) {
+	f := gitfixture.New(t)
+	cli := f.Clone(f.Remote("cli"), "work/repos/tools/cli")
+	f.Git(cli, "switch", "--quiet", "--create", "spike/parser")
+
+	lint := f.Clone(f.Remote("lint-rules"), "work/repos/tools/lint-rules")
+	f.Git(lint, "switch", "--quiet", "--detach", "HEAD")
+
+	experiments := f.Init("work/sandbox/experiments")
+	f.Commit(experiments, "notes.md", "ideas\n", "Start notes")
+
+	site := f.Clone(f.Remote("site"), "work/repos/acme/site")
+	f.Git(site, "switch", "--quiet", "--create", "redesign", "--track", "main")
+
+	got := githerd(t, f.Env(), f.Path("work"), "status", "--json", "--fetch", "--force")
+
+	if got.stderr != "" {
+		t.Errorf("want nothing on stderr; got:\n%s", got.stderr)
+	}
+	nothingFetched := map[string]string{
+		"repos/acme/site":        "null",
+		"repos/tools/cli":        "null",
+		"repos/tools/lint-rules": "null",
+		"sandbox/experiments":    "null",
+	}
+	assertField(t, "fetchedAt", field(t, got, "fetchedAt"), nothingFetched)
+	assertField(t, "stale", field(t, got, "stale"), nothingFetched)
 }
 
 func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
@@ -79,31 +110,33 @@ func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
 	}
 }
 
-// behindByPath decodes the JSON of a status run into each repo's behind count.
-func behindByPath(t *testing.T, got result) map[string]int {
+// field decodes the JSON of a successful status run and returns, for each
+// repo path, the raw JSON of the named field, such as "2" or "null".
+func field(t *testing.T, got result, name string) map[string]string {
 	t.Helper()
 	if got.code != 0 {
 		t.Fatalf("exit code %d, stderr:\n%s", got.code, got.stderr)
 	}
 	var report struct {
-		Repos []struct {
-			Path   string `json:"path"`
-			Behind int    `json:"behind"`
-		} `json:"repos"`
+		Repos []map[string]json.RawMessage `json:"repos"`
 	}
 	if err := json.Unmarshal([]byte(got.stdout), &report); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, got.stdout)
 	}
-	behind := map[string]int{}
+	values := map[string]string{}
 	for _, r := range report.Repos {
-		behind[r.Path] = r.Behind
+		var path string
+		if err := json.Unmarshal(r["path"], &path); err != nil {
+			t.Fatalf("repo without a path: %v\n%s", err, got.stdout)
+		}
+		values[path] = string(r[name])
 	}
-	return behind
+	return values
 }
 
-func assertBehind(t *testing.T, got, want map[string]int) {
+func assertField(t *testing.T, name string, got, want map[string]string) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("behind counts: got %v, want %v", got, want)
+		t.Errorf("%s by repo:\n got %v\nwant %v", name, got, want)
 	}
 }
