@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -171,12 +172,20 @@ func TestTheRailSaysWhyHerdrCouldNotOpenTheRepo(t *testing.T) {
 	}
 }
 
-// The keys line names Enter, o and s. While a filter is typed, o, s and L
+// The keys lines name every key of the rail, Enter, o, s and L among them,
+// on two lines where one is too narrow. While a filter is typed, o, s and L
 // are letters of it.
 func TestTheRailShowsItsOpenKeysAndTheFilterTakesTheirLetters(t *testing.T) {
 	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, Lazygit: true}, session())
-	if got, want := tui.View(m, 50, 18)[17].Text(), "enter page / filter o ws s shell f fetch q quit"+strings.Repeat(" ", 3); got != want {
-		t.Errorf("the keys line shows %q, want %q", got, want)
+	view := tui.View(m, 50, 18)
+	if got, want := []string{view[16].Text(), view[17].Text()}, []string{
+		"enter page  / filter  o ws  s shell  L lazygit" + strings.Repeat(" ", 4),
+		"z zoom  f fetch  q quit" + strings.Repeat(" ", 27),
+	}; !slices.Equal(got, want) {
+		t.Errorf("the keys lines show %q, want %q", got, want)
+	}
+	if got, want := tui.View(m, 80, 18)[17].Text(), "enter page  / filter  o ws  s shell  L lazygit  z zoom  f fetch  q quit"+strings.Repeat(" ", 9); got != want {
+		t.Errorf("80 wide, the keys line shows %q, want %q", got, want)
 	}
 
 	m, cmds := press(m, "/", "o", "s", "L")
@@ -220,10 +229,10 @@ func TestSOpensAShellInTheRepoBesideTheRail(t *testing.T) {
 	assertCmds(t, "s on billing", cmds, unzoom, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/billing"})
 }
 
-// noteLine returns the line above the rail's keys at 50×18, without the
-// blanks around it.
+// noteLine returns the line above the rail's rule and two key lines at
+// 50×18, without the blanks around it.
 func noteLine(m tui.Model) string {
-	return strings.TrimSpace(tui.View(m, 50, 18)[15].Text())
+	return strings.TrimSpace(tui.View(m, 50, 18)[14].Text())
 }
 
 // L opens lazygit in the selected repo, in a shell split beside the rail,

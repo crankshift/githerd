@@ -21,7 +21,8 @@ The rail is a narrow pane listing every repo under the root, the ones that need 
 │repos/tools/lint-rules                           ⌀│
 │sandbox/experiments/data                   ✓ ⧉data│
 │──────────────────────────────────────────────────│
-│enter page / filter o ws s shell f fetch q quit   │
+│enter page  / filter  o ws  s shell  L lazygit    │
+│z zoom  f fetch  q quit                           │
 ```
 
 Enter on a repo opens its repo page, zoomed to the whole tab, with a diff of the selected line:

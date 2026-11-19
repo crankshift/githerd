@@ -283,7 +283,7 @@ func TestRailRedrawsAfterARefreshAndKeepsTheCursorOnItsRepo(t *testing.T) {
 	if got, want := view[0].Text(), "6/10 need attention"+strings.Repeat(" ", 26)+"↻ 30s"; got != want {
 		t.Errorf("once web was fetched, the header shows %q, want %q", got, want)
 	}
-	if got, want := view[len(view)-3].Text(), strings.Repeat(" ", 50); got != want {
+	if got, want := view[len(view)-4].Text(), strings.Repeat(" ", 50); got != want {
 		t.Errorf("after a refresh that went well, the line above the keys shows %q, want it blank", got)
 	}
 }
@@ -341,7 +341,7 @@ func selected(m tui.Model, width, height int) string {
 func listed(m tui.Model) []string {
 	screen := tui.View(m, 50, 18)
 	var out []string
-	for _, l := range screen[3 : len(screen)-2] {
+	for _, l := range screen[3 : len(screen)-3] { // between the header and the rule above the two key lines
 		if text := strings.TrimSpace(l.Text()); text != "" {
 			out = append(out, text)
 		}

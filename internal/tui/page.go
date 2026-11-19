@@ -198,7 +198,11 @@ func (m Model) scrollDetail(dir int) Model {
 
 // pageRows is how many rows of the page are not its body: the header and
 // its rule, and the footer.
-func (m Model) pageRows() int { return 2 + m.footerRows() }
+func (m Model) pageRows() int { return 2 + len(m.pageFooter(m.width)) }
+
+// pageFooter is the repo page's footer w wide. The page is zoomed, wide
+// enough for one line of keys.
+func (m Model) pageFooter(w int) Screen { return m.footer(w, keys(w, 1, pageKeys...)) }
 
 // settlePage scrolls the page's list as little as keeps the cursor in view
 // at the height of the terminal, with the heading above it when it is the
@@ -325,7 +329,7 @@ func (p page) entries() []entry {
 // pageView draws the repo page: a header with the repo's state, the list
 // of its sections beside what the selected line shows, and the keys.
 func pageView(m Model, w, h int) Screen {
-	footer := m.footer(w, keys(w, "j/k", "move", "J/K", "scroll", "esc", "back", "o", "ws", "s", "shell", "L", "lazygit", "z", "zoom", "f", "fetch", "q", "quit"))
+	footer := m.pageFooter(w)
 	screen := Screen{m.pageHeader(w), rule(w)}
 	body := max(h-len(screen)-len(footer), 0)
 	lw, rw := columns(w)

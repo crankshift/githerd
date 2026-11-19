@@ -102,13 +102,14 @@ func (m Model) move(n int) Model {
 // filter, rule.
 const railHeader = 3
 
-// footerRows is how many rows the rail's footer takes.
-func (m Model) footerRows() int { return len(m.footer(0, Line{})) }
+// railFooter is the rail's footer w wide. The rail is narrow, so its keys
+// take two lines when one is too narrow for them.
+func (m Model) railFooter(w int) Screen { return m.footer(w, keys(w, 2, railKeys...)) }
 
-// footer is the rail's footer: the note, or else what went wrong if
-// anything did, then a rule and the keys.
-func (m Model) footer(w int, keys Line) Screen {
-	footer := Screen{rule(w), keys}
+// footer is the footer of the rail or the repo page: the note, or else what
+// went wrong if anything did, then a rule and the key lines.
+func (m Model) footer(w int, keys Screen) Screen {
+	footer := append(Screen{rule(w)}, keys...)
 	switch {
 	case m.note != "":
 		footer = append(Screen{{Spans: fit([]Span{{Text: m.note, Style: Style{Color: Yellow}}}, w)}}, footer...)
@@ -126,7 +127,7 @@ func (m Model) settle() Model {
 	if len(lines) > 0 && !slices.ContainsFunc(lines, func(l line) bool { return l.repo.Dir == m.selected }) {
 		m.selected = lines[0].repo.Dir
 	}
-	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-m.footerRows())
+	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-len(m.railFooter(m.width)))
 	return m.settlePage()
 }
 
@@ -189,7 +190,7 @@ func railView(m Model, w, h int) Screen {
 		return noRootsView(m, w, h)
 	}
 	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
-	footer := m.footer(w, keys(w, "enter", "page", "/", "filter", "o", "ws", "s", "shell", "f", "fetch", "q", "quit"))
+	footer := m.railFooter(w)
 
 	lines := m.lines()
 	cur := m.cursor(lines)
@@ -228,7 +229,7 @@ func noRootsView(m Model, w, h int) Screen {
 	for _, text := range texts {
 		screen = append(screen, Line{Spans: fit([]Span{{Text: text}}, w)})
 	}
-	footer := m.footer(w, keys(w, "q", "quit"))
+	footer := m.footer(w, keys(w, 1, "q", "quit"))
 	for len(screen) < h-len(footer) {
 		screen = append(screen, blank(w))
 	}
@@ -309,24 +310,60 @@ func (m Model) counts(w int) Line {
 	return Line{Spans: leftRight(spans, right, w)}
 }
 
-// keys is a line of key hints: each key followed by what it does, two
-// blanks apart, or one when two don't fit.
-func keys(w int, pairs ...string) Line {
-	hint := func(gap string) []Span {
-		var spans []Span
-		for i := 0; i+1 < len(pairs); i += 2 {
-			if i > 0 {
-				spans = append(spans, Span{Text: gap})
-			}
-			spans = append(spans, Span{Text: pairs[i], Style: Style{Color: Blue}}, Span{Text: " " + pairs[i+1]})
+// The key hints of the rail and of the repo page: each key, then what it
+// does.
+var (
+	railKeys = []string{"enter", "page", "/", "filter", "o", "ws", "s", "shell", "L", "lazygit", "z", "zoom", "f", "fetch", "q", "quit"}
+	pageKeys = []string{"j/k", "move", "J/K", "scroll", "esc", "back", "o", "ws", "s", "shell", "L", "lazygit", "z", "zoom", "f", "fetch", "q", "quit"}
+)
+
+// keys lays out key hints, each key followed by what it does, on at most n
+// lines w wide, as many on each line as fit: two blanks apart, or one when
+// two don't fit. What doesn't fit even so is cut from the end of the last
+// line.
+func keys(w, n int, pairs ...string) Screen {
+	var hints [][]Span
+	for i := 0; i+1 < len(pairs); i += 2 {
+		hints = append(hints, []Span{{Text: pairs[i], Style: Style{Color: Blue}}, {Text: " " + pairs[i+1]}})
+	}
+	lines := pack(hints, "  ", w)
+	if len(lines) > n {
+		lines = pack(hints, " ", w)
+	}
+	if len(lines) > n {
+		last := lines[n-1]
+		for _, l := range lines[n:] {
+			last = append(append(last, Span{Text: " "}), l...)
 		}
-		return spans
+		lines = append(lines[:n-1], last)
 	}
-	spans := hint("  ")
-	if width(spansText(spans)) > w {
-		spans = hint(" ")
+	var out Screen
+	for _, l := range lines {
+		out = append(out, Line{Spans: fit(l, w)})
 	}
-	return Line{Spans: fit(spans, w)}
+	return out
+}
+
+// pack lays hints out on lines w wide, gap apart, as many on each line as
+// fit. A hint wider than w gets a line of its own.
+func pack(hints [][]Span, gap string, w int) [][]Span {
+	var lines [][]Span
+	var cur []Span
+	for _, h := range hints {
+		switch {
+		case cur == nil:
+			cur = slices.Clone(h)
+		case width(spansText(cur))+width(gap)+width(spansText(h)) <= w:
+			cur = append(append(cur, Span{Text: gap}), h...)
+		default:
+			lines = append(lines, cur)
+			cur = slices.Clone(h)
+		}
+	}
+	if cur != nil {
+		lines = append(lines, cur)
+	}
+	return lines
 }
 
 // scroll returns the index of the first of n lines to show in a body of

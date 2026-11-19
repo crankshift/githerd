@@ -32,7 +32,7 @@ Judgement calls (smells). Fix the ones where the copies behave differently; fix 
 - [x] P4. Lock race in sync: after finishing, a sync that finds the pending mark retries the lock. If another sync took it in between, it returns an empty result and throws away the run it already did. Return the completed result.
 - [x] P5. `s`/`L` split the rail downwards, so the shell or lazygit gets a quarter of the width. Spec: "beside the rail". Split the pane the rail was opened from (from the plugin context) to the right; fall back to splitting the rail down when that pane is gone.
 - [x] P6. `s`/`L` from a zoomed repo page leave the zoom on, so the new split is hidden. Unzoom the rail's pane first.
-- [ ] P7. The rail's key-hint line omits `L` and `z`.
+- [x] P7. The rail's key-hint line omits `L` and `z`.
 - [ ] P8. The `tab_bar_right` entry in the README runs githerd outside the plugin, without the hooks' state dir or lock. Add a `sync` action to the manifest and make the README entry `"$HERDR_BIN_PATH" plugin action invoke githerd.sync`. Check the qualified action id form in the research note.
 - [ ] P9. The spec's JSON example shows `"root": "~/work"`; the code prints an absolute path (ticket 01 decision). Update the spec example.
 
