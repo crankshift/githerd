@@ -91,9 +91,11 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 	} else {
 		printTable(stdout, root, repos, stale)
-		for _, dir := range dirs {
-			if o, ok := stale[dir]; ok {
-				fmt.Fprintf(stderr, "githerd: %s: %s: %v\n", relPath(root, dir), strings.TrimSpace("fetch "+o.Remote), o.Err)
+		// Why each listed stale repo is stale; an unreadable repo's read
+		// error above already covers its fetch.
+		for _, r := range repos {
+			if o, ok := stale[r.Dir]; ok {
+				fmt.Fprintf(stderr, "githerd: %s: %s: %v\n", relPath(root, r.Dir), strings.TrimSpace("fetch "+o.Remote), o.Err)
 			}
 		}
 	}

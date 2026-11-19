@@ -13,7 +13,10 @@ import (
 const usage = `usage: githerd <command> [arguments]
 
 Commands:
-  status [root] [--json] [--depth N]   print the state of every repo under root (default: .)
+  status [root] [--json] [--depth N] [--fetch [--ttl D] [--force] [--fetch-timeout D]]
+      print the state of every repo under root (default: .); with --fetch,
+      fetch each repo's upstream remote first, skipping repos fetched within
+      the TTL (default 15m) unless --force is given
 `
 
 func main() {

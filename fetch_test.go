@@ -225,6 +225,24 @@ func TestStatusFetchNeverPrompts(t *testing.T) {
 	}
 }
 
+func TestStatusFetchReportsAnUnreadableRepoOnce(t *testing.T) {
+	f := gitfixture.New(t)
+	f.Clone(f.Remote("docs"), "work/repos/acme/docs")
+	f.Write(f.Path("work/repos/acme/broken"), ".git", "gitdir: ../nowhere\n")
+
+	got := githerd(t, f.Env(), f.Path("."), "status", "--fetch", f.Path("work"))
+
+	lines := 0
+	for _, line := range strings.Split(got.stderr, "\n") {
+		if strings.Contains(line, "repos/acme/broken") {
+			lines++
+		}
+	}
+	if got.code != 1 || lines != 1 {
+		t.Errorf("want exit 1 and one stderr line about the broken repo; got code %d, stderr:\n%s", got.code, got.stderr)
+	}
+}
+
 func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("web"), "work/repos/acme/web")
