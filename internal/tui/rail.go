@@ -23,12 +23,23 @@ func railKey(m Model, k Key) (Model, []Cmd) {
 		m = m.move(-1)
 	case KeyEnter, "l", KeyRight:
 		return m.openPage()
-	case "z":
-		return m, m.zoom(ZoomToggle)
 	case "/":
 		m.filtering = true
 	case KeyEsc:
 		m.filter = ""
+	default:
+		return sharedKey(m, k)
+	}
+	return m, nil
+}
+
+// sharedKey handles the keys that do the same on the rail and on the repo
+// page: z zooms the rail's pane in or out, f fetches every repo of the
+// root, o, s and L open the selected repo, and q quits.
+func sharedKey(m Model, k Key) (Model, []Cmd) {
+	switch k {
+	case "z":
+		return m, m.zoom(ZoomToggle)
 	case "f":
 		return m.forceFetch()
 	case "o", "s", "L":

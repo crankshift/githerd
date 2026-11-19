@@ -97,14 +97,8 @@ func pageKey(m Model, k Key) (Model, []Cmd) {
 		m = m.scrollDetail(1)
 	case "K":
 		m = m.scrollDetail(-1)
-	case "z":
-		return m, m.zoom(ZoomToggle)
-	case "f":
-		return m.forceFetch()
-	case "o", "s", "L":
-		return act(m, k)
-	case "q":
-		return m, []Cmd{Quit{}}
+	default:
+		return sharedKey(m, k)
 	}
 	return m, nil
 }
