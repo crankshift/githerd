@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Fixture is a temp dir holding bare remotes, scratch clones and a root.
@@ -119,9 +120,21 @@ func (f *Fixture) PushElsewhere(remote, branch string, n int) {
 	other := f.Path(fmt.Sprintf("scratch/teammate-%d", f.pushes))
 	f.Git(f.dir, "clone", "--quiet", "--branch", branch, remote, other)
 	for i := 1; i <= n; i++ {
-		f.Commit(other, fmt.Sprintf("teammate-%d.txt", i), "change\n", fmt.Sprintf("Teammate change %d", i))
+		f.Commit(other, fmt.Sprintf("teammate-%d-%d.txt", f.pushes, i), "change\n", fmt.Sprintf("Teammate change %d", i))
 	}
 	f.Git(other, "push", "--quiet", "origin", branch)
+}
+
+// FetchedAgo fetches repo and then backdates its FETCH_HEAD by ago, as if
+// the fetch had happened that long before now.
+func (f *Fixture) FetchedAgo(repo string, ago time.Duration) {
+	f.t.Helper()
+	f.Git(repo, "fetch", "--quiet")
+	path := f.Git(repo, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD")
+	at := time.Now().Add(-ago)
+	if err := os.Chtimes(path, at, at); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // Write writes content to file inside repo, creating parent dirs.

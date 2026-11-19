@@ -8,34 +8,51 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/crankshift/githerd/internal/status"
 )
 
+// DefaultTTL is how long a fetch stays fresh when the caller has no
+// preference.
+const DefaultTTL = 15 * time.Minute
+
 // Options says which repos Run fetches.
-type Options struct{}
+type Options struct {
+	TTL   time.Duration // skip a repo fetched less than TTL ago
+	Force bool          // fetch every repo, whatever the TTL
+}
 
 // Outcome is what Run did for one repo.
 type Outcome struct {
 	Dir     string
 	Remote  string // remote of the current branch's upstream; empty when there is none, so nothing was fetched
-	Fetched bool   // git fetch ran and succeeded
+	Fetched bool   // git fetch ran and succeeded; false when the repo was skipped
 	Err     error  // git fetch failed
 }
 
-// Run fetches the remote of each repo's upstream and returns one outcome
-// per repo, in the order of dirs.
+// Run fetches the remote of each repo's upstream, skipping repos fetched
+// within opts.TTL unless opts.Force is set. It returns one outcome per repo,
+// in the order of dirs.
 func Run(ctx context.Context, dirs []string, opts Options) []Outcome {
 	outcomes := make([]Outcome, len(dirs))
 	for i, dir := range dirs {
-		outcomes[i] = one(ctx, dir)
+		outcomes[i] = one(ctx, dir, opts)
 	}
 	return outcomes
 }
 
-func one(ctx context.Context, dir string) Outcome {
+func one(ctx context.Context, dir string, opts Options) Outcome {
 	o := Outcome{Dir: dir}
 	o.Remote, o.Err = upstreamRemote(ctx, dir)
 	if o.Err != nil || o.Remote == "" {
 		return o
+	}
+	if !opts.Force {
+		var last time.Time
+		if last, o.Err = status.FetchedAt(ctx, dir); o.Err != nil || time.Since(last) < opts.TTL {
+			return o
+		}
 	}
 	if _, o.Err = git(ctx, dir, "fetch", "--quiet", o.Remote); o.Err == nil {
 		o.Fetched = true

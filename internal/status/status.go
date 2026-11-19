@@ -96,15 +96,15 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 		}
 	}
 
-	if r.FetchedAt, err = fetchedAt(ctx, dir); err != nil {
+	if r.FetchedAt, err = FetchedAt(ctx, dir); err != nil {
 		return Repo{}, err
 	}
 	return r, nil
 }
 
-// fetchedAt returns the mtime of the repo's FETCH_HEAD, or the zero time
-// when it has none.
-func fetchedAt(ctx context.Context, dir string) (time.Time, error) {
+// FetchedAt returns when the repo in dir was last fetched: the mtime of its
+// FETCH_HEAD, or the zero time when it has none.
+func FetchedAt(ctx context.Context, dir string) (time.Time, error) {
 	out, err := git(ctx, dir, "rev-parse", "--git-path", "FETCH_HEAD")
 	if err != nil {
 		return time.Time{}, err

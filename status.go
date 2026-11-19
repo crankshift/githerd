@@ -27,8 +27,20 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	asJSON := fs.Bool("json", false, "print JSON instead of a table")
 	depth := fs.Int("depth", discovery.DefaultDepth, "directory levels below the root to scan")
 	doFetch := fs.Bool("fetch", false, "fetch each repo's upstream remote before reporting")
+	ttl := fs.Duration("ttl", fetch.DefaultTTL, "with --fetch, skip repos fetched less than this long ago")
+	force := fs.Bool("force", false, "with --fetch, fetch every repo, whatever the TTL")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
+		return 2
+	}
+	if !*doFetch {
+		if name := setFlag(fs, "ttl", "force"); name != "" {
+			fmt.Fprintf(stderr, "githerd status: --%s needs --fetch\n", name)
+			return 2
+		}
+	}
+	if *ttl < 0 {
+		fmt.Fprintln(stderr, "githerd status: --ttl must not be negative")
 		return 2
 	}
 	if len(positional) > 1 {
@@ -55,7 +67,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	if *doFetch {
-		fetch.Run(ctx, dirs, fetch.Options{})
+		fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force})
 	}
 	repos, errs := readAll(ctx, dirs)
 	for _, err := range errs {
@@ -94,6 +106,18 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, rest[0])
 		args = rest[1:]
 	}
+}
+
+// setFlag returns the first of names that was set on the command line, or "".
+func setFlag(fs *flag.FlagSet, names ...string) string {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	for _, name := range names {
+		if set[name] {
+			return name
+		}
+	}
+	return ""
 }
 
 // readAll reads every repo in parallel and keeps the order of dirs. Repos
