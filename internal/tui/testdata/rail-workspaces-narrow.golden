@@ -1,0 +1,16 @@
+│6/10 · 1 stale     ↻ 30s│
+│~/work                  │
+│────────────────────────│
+│repos/acme/api     ●3 ⇡2│ selected
+│repos/acme/billing    ⇡2│
+│repos/acme/mobile  ⇡1 ⇣2│
+│repos/acme/web ⇣4 ⚠ ⧉web│
+│repos/tools/cli     ∅ ⇡3│
+│sandbox/experiments ∅ ⇡2│
+│. (root)               ✓│ dim
+│repos/acme/docs        ✓│ dim
+│repos/tools/lint-rules ⌀│ dim
+│…/data           ✓ ⧉data│ dim
+│                        │
+│────────────────────────│
+│enter page / filter o ws│

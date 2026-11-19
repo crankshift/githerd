@@ -13,4 +13,4 @@
 │  * feature/login           ⇡2│ }                           │
 │    fix/token-e… ∅ no upstream│@@ -40,3 +41,4 @@ func Regis…│
 │────────────────────────────────────────────────────────────│
-│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit     │
+│j/k move J/K scroll esc back o ws s shell L lazygit z zoom f│

@@ -100,6 +100,8 @@ func pageKey(m Model, k Key) (Model, []Cmd) {
 		return m, m.zoom(ZoomToggle)
 	case "f":
 		return m.forceFetch()
+	case "o", "s", "L":
+		return act(m, k)
 	case "q":
 		return m, []Cmd{Quit{}}
 	}
@@ -200,13 +202,8 @@ func (m Model) scrollDetail(dir int) Model {
 }
 
 // pageRows is how many rows of the page are not its body: the header and
-// its rule, what went wrong if anything did, a rule and the keys.
-func (m Model) pageRows() int {
-	if len(m.problems) > 0 {
-		return 5
-	}
-	return 4
-}
+// its rule, and the footer.
+func (m Model) pageRows() int { return 2 + m.footerRows() }
 
 // settlePage scrolls the page's list as little as keeps the cursor in view
 // at the height of the terminal, with the heading above it when it is the
@@ -333,10 +330,7 @@ func (p page) entries() []entry {
 // pageView draws the repo page: a header with the repo's state, the list
 // of its sections beside what the selected line shows, and the keys.
 func pageView(m Model, w, h int) Screen {
-	footer := Screen{rule(w), keys(w, "j/k", "move", "J/K", "scroll", "esc", "back", "z", "zoom", "f", "fetch", "q", "quit")}
-	if len(m.problems) > 0 {
-		footer = append(Screen{m.problemLine(w)}, footer...)
-	}
+	footer := m.footer(w, keys(w, "j/k", "move", "J/K", "scroll", "esc", "back", "o", "ws", "s", "shell", "L", "lazygit", "z", "zoom", "f", "fetch", "q", "quit"))
 	screen := Screen{m.pageHeader(w), rule(w)}
 	body := max(h-len(screen)-len(footer), 0)
 	lw, rw := columns(w)

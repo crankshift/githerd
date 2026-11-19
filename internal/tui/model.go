@@ -6,7 +6,6 @@ package tui
 
 import (
 	"path/filepath"
-	"slices"
 	"time"
 
 	"github.com/crankshift/githerd/internal/status"
@@ -48,11 +47,28 @@ type Loaded struct {
 	Roots    []Root   // in roots-file order
 	Problems []string // what went wrong while reading, such as a repo git could not read
 	Refresh  bool     // it answers a Refresh
+	// Workspaces are the workspaces of the Herdr session, in sidebar order,
+	// as the sync mapped them. WorkspacesRead is set when the sync read
+	// them; without it, the rail keeps the workspaces it knew.
+	Workspaces     []Workspace
+	WorkspacesRead bool
 }
 
-// Failed says a request to Herdr that the terminal layer ran for the model,
-// such as a Zoom, failed, and why. It shows until the next refresh.
+// Created answers a CreateWorkspace: the id of the workspace Herdr created
+// at Dir, or why it could not create one.
+type Created struct{ Dir, ID, Err string }
+
+// Failed answers a FocusWorkspace, a Split or a Zoom that failed: why it
+// did.
 type Failed struct{ Err string }
+
+// Workspace is a Herdr workspace and where its first pane's cwd lies.
+type Workspace struct {
+	ID    string
+	Label string
+	Root  string // Dir of the root holding the cwd; empty outside every root
+	Repo  string // Dir of the deepest nested repo holding it; empty for a root workspace
+}
 
 // Root is a configured root and its repos.
 type Root struct {
@@ -82,6 +98,20 @@ type Refresh struct{ Force []string }
 // Quit asks the terminal layer to restore the terminal and exit.
 type Quit struct{}
 
+// FocusWorkspace asks Herdr to focus workspace ID: `herdr workspace focus
+// ID`.
+type FocusWorkspace struct{ ID string }
+
+// CreateWorkspace asks Herdr to create a workspace at Dir, labelled Label,
+// and focus it: `herdr workspace create --cwd Dir --label Label --focus`.
+type CreateWorkspace struct{ Dir, Label string }
+
+// Split asks Herdr to split Pane, the rail's own, with a shell in Dir below
+// it, and focus the shell: `herdr pane split --pane Pane --direction down
+// --cwd Dir --focus`. With Run set, Run is then typed into the shell:
+// `herdr pane run <new pane> Run`.
+type Split struct{ Pane, Dir, Run string }
+
 // Zoom asks Herdr to zoom Pane, the rail's own pane, in or out, or to
 // toggle it: `herdr pane zoom --pane <Pane> --on|--off|--toggle`. It always
 // names the pane, since Herdr would otherwise zoom whichever pane has focus.
@@ -104,11 +134,14 @@ const (
 // answer is a PageLoaded.
 type LoadPage struct{ Dir string }
 
-func (Load) cmd()     {}
-func (Refresh) cmd()  {}
-func (Quit) cmd()     {}
-func (Zoom) cmd()     {}
-func (LoadPage) cmd() {}
+func (Load) cmd()            {}
+func (Refresh) cmd()         {}
+func (Quit) cmd()            {}
+func (FocusWorkspace) cmd()  {}
+func (CreateWorkspace) cmd() {}
+func (Split) cmd()           {}
+func (Zoom) cmd()            {}
+func (LoadPage) cmd()        {}
 
 // Options are what the rail knows when it opens.
 type Options struct {
@@ -118,8 +151,9 @@ type Options struct {
 	Cwd       string
 	RootsFile string // where the roots file is, as the no-roots guidance shows it
 	// Pane is the rail's own pane, from HERDR_PANE_ID, which the requests
-	// to Herdr name. Without it, the rail asks Herdr for nothing.
-	Pane string
+	// to Herdr name. Without it, the rail asks Herdr for no zoom.
+	Pane    string
+	Lazygit bool // lazygit is on PATH
 }
 
 // Model is the state of the UI. The zero Model is not usable; use New.
@@ -134,6 +168,11 @@ type Model struct {
 	roots    []Root // as last loaded
 	root     int    // index in roots of the root shown
 	problems []string
+	note     string // a message for the user, shown above the keys until the next key
+
+	workspaces     []Workspace // the session's, as the last sync that read them mapped them
+	workspacesRead bool        // a sync has read them
+	created        []created   // workspaces the rail created that the syncs may not have seen
 
 	selected string // Dir of the repo on the cursor's line
 	placed   bool   // the cursor was put on the start repo
@@ -142,6 +181,7 @@ type Model struct {
 	filter    string // keeps the lines whose path holds its letters in order
 	filtering bool   // keys go to the filter
 
+	refreshes   int       // how many Refreshes have started
 	refreshing  bool      // a Refresh is running
 	forcing     bool      // the Refresh running fetches whatever the TTL
 	forceQueued bool      // a forced Refresh starts when the one running ends
@@ -174,12 +214,15 @@ func Update(m Model, msg Msg) (Model, []Cmd) {
 		m = m.pageLoaded(msg)
 	case DetailLoaded:
 		m = m.detailLoaded(msg)
+	case Created:
+		m = m.answered(msg)
 	case Failed:
-		m.problems = append(slices.Clip(m.problems), msg.Err)
+		m.note = "⚠ " + msg.Err
 	case Key:
 		if msg == KeyCtrlC {
 			return m, []Cmd{Quit{}}
 		}
+		m.note = ""
 		if m.page.open() {
 			m, cmds = pageKey(m, msg)
 		} else {
@@ -211,6 +254,10 @@ func (m Model) zoom(mode ZoomMode) []Cmd {
 // the first load.
 func loaded(m Model, msg Loaded) (Model, []Cmd) {
 	m.loaded, m.roots, m.problems, m.now = true, msg.Roots, msg.Problems, msg.At
+	if msg.WorkspacesRead {
+		m.workspaces, m.workspacesRead = msg.Workspaces, true
+		m.created = m.unseen()
+	}
 	m.root = pickRoot(m.roots, m.opts.Cwd)
 	if !m.placed {
 		if r := m.shown(); r != nil && len(r.Repos) > 0 {
@@ -231,6 +278,7 @@ func loaded(m Model, msg Loaded) (Model, []Cmd) {
 // shown, whatever the TTL.
 func (m Model) refresh(force bool) (Model, []Cmd) {
 	m.refreshing, m.forcing, m.forceQueued = true, force, false
+	m.refreshes++
 	var r Refresh
 	if root := m.shown(); force && root != nil {
 		for _, repo := range root.Repos {

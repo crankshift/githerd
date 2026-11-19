@@ -120,14 +120,14 @@ func TestRailShowsStaleReposBeforeTheSyncEnds(t *testing.T) {
 }
 
 // startRail starts githerd rail on term as Herdr runs it in the pane it
-// opened, as w1:p9, split from a pane whose cwd is cwd. The channel gets the
-// rail's exit.
-func (h *fakeHerdr) startRail(term *pty, cwd string) <-chan error {
+// opened, as w1:p9, split from a pane whose cwd is cwd, with extra env added.
+// The channel gets the rail's exit.
+func (h *fakeHerdr) startRail(term *pty, cwd string, extra ...string) <-chan error {
 	h.t.Helper()
 	cmd := exec.Command(githerdBin, "rail")
 	cmd.Dir = h.f.Path(".")
-	cmd.Env = append(h.env(), "PWD="+cmd.Dir, "HERDR_PANE_ID=w1:p9",
-		`HERDR_PLUGIN_CONTEXT_JSON={"workspace_id":"w1","focused_pane_id":"w1:p1","focused_pane_cwd":"`+cwd+`"}`)
+	cmd.Env = append(append(h.env(), "PWD="+cmd.Dir, "HERDR_PANE_ID=w1:p9",
+		`HERDR_PLUGIN_CONTEXT_JSON={"workspace_id":"w1","focused_pane_id":"w1:p1","focused_pane_cwd":"`+cwd+`"}`), extra...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = term.slave, term.slave, term.slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {

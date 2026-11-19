@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,9 +11,6 @@ import (
 	"github.com/crankshift/githerd/internal/repopage"
 	"github.com/crankshift/githerd/internal/tui"
 )
-
-// railPane is the rail's own pane in these tests, as HERDR_PANE_ID names it.
-const railPane = "w1:p9"
 
 // paneRail is a rail in its pane railPane, opened from cwd, that has loaded
 // roots and finished its first refresh, at t0, 100×24.
@@ -461,4 +459,29 @@ func TestRepoPageShowsWhatWentWrong(t *testing.T) {
 	if got, want := strings.TrimSpace(tui.View(m, 100, 24)[21].Text()), "⚠ herdr pane zoom: pane not found"; got != want {
 		t.Errorf("after a failed request, the line above the keys shows %q, want %q", got, want)
 	}
+}
+
+// On the repo page, o, s and L act on the page's repo as they do on the
+// rail, even once a refresh no longer lists it.
+func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
+	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane}, session())
+	m, _ = press(m, "j", tui.KeyEnter) // billing's page
+	billing := "/work/repos/acme/billing"
+
+	_, cmds := press(m, "s")
+	assertCmds(t, "s", cmds, tui.Split{Pane: railPane, Dir: billing})
+	_, cmds = press(m, "o")
+	assertCmds(t, "o", cmds, tui.CreateWorkspace{Dir: billing, Label: "billing"})
+	l, cmds := press(m, "L")
+	assertCmds(t, "L without lazygit", cmds)
+	if got, want := strings.TrimSpace(tui.View(l, 50, 18)[15].Text()), "lazygit is not on PATH"; got != want {
+		t.Errorf("L without lazygit: the line above the keys shows %q, want %q", got, want)
+	}
+
+	gone := work()
+	gone.Repos = slices.Delete(gone.Repos, 2, 3) // billing
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(30 * time.Second)})
+	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{gone}, Refresh: true, Workspaces: session(), WorkspacesRead: true})
+	_, cmds = press(m, "s")
+	assertCmds(t, "s once billing is no longer listed", cmds, tui.Split{Pane: railPane, Dir: billing})
 }

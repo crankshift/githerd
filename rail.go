@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -80,13 +81,34 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	defer signal.Stop(winch)
 
 	w, h, _ := r.term.Size()
-	m, cmds := tui.New(tui.Options{Now: time.Now(), Cwd: canonical(cwd), Pane: pane, RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir))})
+	// The rail runs with the Herdr server's PATH, as the shells Herdr opens do.
+	_, lazygitErr := exec.LookPath("lazygit")
+	m, cmds := tui.New(tui.Options{
+		Now:       time.Now(),
+		Cwd:       canonical(cwd),
+		RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir)),
+		Pane:      pane,
+		Lazygit:   lazygitErr == nil,
+	})
 	m, _ = tui.Update(m, tui.Resize{Width: w, Height: h})
 	for {
 		for _, c := range cmds {
 			switch c := c.(type) {
 			case tui.Quit:
 				return
+			case tui.FocusWorkspace:
+				r.inTurn(ctx, func() tui.Msg { return failed(herdr.FocusWorkspace(ctx, r.env, c.ID)) })
+			case tui.CreateWorkspace:
+				r.inTurn(ctx, func() tui.Msg {
+					id, err := herdr.CreateWorkspace(ctx, r.env, c.Dir, c.Label)
+					msg := tui.Created{Dir: c.Dir, ID: id}
+					if err != nil {
+						msg.Err = err.Error()
+					}
+					return msg
+				})
+			case tui.Split:
+				r.inTurn(ctx, func() tui.Msg { return failed(herdr.OpenShell(ctx, r.env, c.Pane, c.Dir, c.Run)) })
 			case tui.Load:
 				first := problems
 				problems = nil
@@ -108,12 +130,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 					return tui.DetailLoaded{Dir: c.Dir, Item: c.Item, Detail: d, Err: errText(err)}
 				})
 			case tui.Zoom:
-				r.inTurn(ctx, func() tui.Msg {
-					if err := herdr.Zoom(ctx, r.env, c.Pane, string(c.Mode)); err != nil {
-						return tui.Failed{Err: err.Error()}
-					}
-					return nil
-				})
+				r.inTurn(ctx, func() tui.Msg { return failed(herdr.Zoom(ctx, r.env, c.Pane, string(c.Mode))) })
 			}
 		}
 		r.term.Draw(tui.View(m, w, h).ANSI())
@@ -131,8 +148,17 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	}
 }
 
-// background runs f on its own and hands its answer, if it has one, to the
-// model.
+// failed returns the answer to a request that err tells failed, or nil
+// when the request did not fail.
+func failed(err error) tui.Msg {
+	if err == nil {
+		return nil
+	}
+	return tui.Failed{Err: err.Error()}
+}
+
+// background runs f on its own and hands its answer to the model, if it
+// has one.
 func (r *rail) background(ctx context.Context, f func() tui.Msg) {
 	r.work.Add(1)
 	go func() {
@@ -248,6 +274,16 @@ func refresh(ctx context.Context, env herdr.Env, force []string) tui.Loaded {
 	for _, root := range res.Roots {
 		l.Roots = append(l.Roots, railRoot(root.Path, root.Repos))
 	}
+	// A session always has a workspace, the rail's own; with none, the sync
+	// could not read the snapshot.
+	l.WorkspacesRead = len(res.Workspaces) > 0
+	for _, w := range res.Workspaces {
+		rw := tui.Workspace{ID: w.ID, Label: w.Label, Root: canonical(w.Root)}
+		if w.Repo != "" {
+			rw.Repo = under(w.Root, rw.Root, w.Repo)
+		}
+		l.Workspaces = append(l.Workspaces, rw)
+	}
 	l.At = time.Now()
 	return l
 }
@@ -259,15 +295,24 @@ func railRoot(path string, repos []herdr.Repo) tui.Root {
 	root := tui.Root{Name: tildePath(path), Dir: canonical(path)}
 	for _, repo := range repos {
 		r := tui.Repo{Repo: repo.Repo}
-		if rel, err := filepath.Rel(path, repo.Dir); err == nil {
-			r.Dir = filepath.Join(root.Dir, rel) // below the root, discovery follows no symlinks
-		}
+		r.Dir = under(path, root.Dir, repo.Dir)
 		if repo.Stale != nil {
 			r.Stale = repo.Stale.Error()
 		}
 		root.Repos = append(root.Repos, r)
 	}
 	return root
+}
+
+// under returns dir, which lies under the root at path, as it lies under
+// canon, the root's path with symlinks resolved: below the root, discovery
+// follows no symlinks.
+func under(path, canon, dir string) string {
+	rel, err := filepath.Rel(path, dir)
+	if err != nil {
+		return dir
+	}
+	return filepath.Join(canon, rel)
 }
 
 // canonical returns path cleaned and with symlinks resolved, or only

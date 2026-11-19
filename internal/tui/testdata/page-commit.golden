@@ -21,4 +21,4 @@
 │  e4b2c90 Initial commit           1mo│rename to src/errors.go                                      │
 │                                      │                                                             │
 │────────────────────────────────────────────────────────────────────────────────────────────────────│
-│j/k move  J/K scroll  esc back  z zoom  f fetch  q quit                                             │
+│j/k move  J/K scroll  esc back  o ws  s shell  L lazygit  z zoom  f fetch  q quit                   │
