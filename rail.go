@@ -13,11 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crankshift/githerd/internal/discovery"
 	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/herdr"
 	"github.com/crankshift/githerd/internal/repopage"
-	"github.com/crankshift/githerd/internal/status"
 	"github.com/crankshift/githerd/internal/term"
 	"github.com/crankshift/githerd/internal/tui"
 )
@@ -113,7 +111,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 				first := problems
 				problems = nil
 				r.background(ctx, func() tui.Msg {
-					l := load(ctx, r.env)
+					l := loaded(herdr.Scan(ctx, r.env))
 					l.Problems = append(first, l.Problems...)
 					return l
 				})
@@ -225,34 +223,6 @@ func (r *rail) readKeys(ctx context.Context) {
 	}
 }
 
-// load reads the repos under every root from disk, without fetching: their
-// state, and whether their last fetch failed.
-func load(ctx context.Context, env herdr.Env) tui.Loaded {
-	paths, errs := herdr.ReadRoots(env.ConfigDir)
-	l := tui.Loaded{Problems: messages(errs)}
-	for _, path := range paths {
-		dirs, err := discovery.Repos(path, discovery.DefaultDepth)
-		if err != nil {
-			l.Problems = append(l.Problems, fmt.Sprintf("root %s: %v", path, err))
-		}
-		stale := map[string]error{}
-		for _, o := range fetch.Last(ctx, dirs) {
-			if o.Err != nil {
-				stale[o.Dir] = o.Err
-			}
-		}
-		repos, errs := status.ReadAll(ctx, dirs)
-		l.Problems = append(l.Problems, messages(errs)...)
-		var hr []herdr.Repo
-		for _, repo := range repos {
-			hr = append(hr, herdr.Repo{Repo: repo, Stale: stale[repo.Dir]})
-		}
-		l.Roots = append(l.Roots, railRoot(path, hr))
-	}
-	l.At = time.Now()
-	return l
-}
-
 // refresh runs the refresh `githerd herdr sync` runs, after fetching the
 // repos in force whatever the TTL. When another sync holds the lock, that
 // sync runs once more in this one's place, and the rail reads the repos from
@@ -263,59 +233,37 @@ func refresh(ctx context.Context, env herdr.Env, force []string) tui.Loaded {
 	}
 	res, err := herdr.Sync(ctx, env)
 	if !res.Ran {
-		l := load(ctx, env)
-		if err != nil {
-			l.Problems = append(l.Problems, err.Error())
-		}
-		l.Refresh = true
-		return l
+		res = herdr.Scan(ctx, env)
 	}
-	l := tui.Loaded{Problems: messages(res.Errs), Refresh: true}
-	if err != nil {
-		l.Problems = append(l.Problems, err.Error())
-	}
-	for _, root := range res.Roots {
-		l.Roots = append(l.Roots, railRoot(root.Path, root.Repos))
-	}
-	// A session always has a workspace, the rail's own; with none, the sync
-	// could not read the snapshot.
-	l.WorkspacesRead = len(res.Workspaces) > 0
-	for _, w := range res.Workspaces {
-		rw := tui.Workspace{ID: w.ID, Label: w.Label, Root: canonical(w.Root)}
-		if w.Repo != "" {
-			rw.Repo = under(w.Root, rw.Root, w.Repo)
-		}
-		l.Workspaces = append(l.Workspaces, rw)
-	}
-	l.At = time.Now()
+	l := loaded(res, err)
+	l.Refresh = true
 	return l
 }
 
-// railRoot returns the root at path with its repos as the rail shows them:
-// named with ~ for the home dir, with symlinks resolved so they match the
-// cwd the rail was opened from.
-func railRoot(path string, repos []herdr.Repo) tui.Root {
-	root := tui.Root{Name: tildePath(path), Dir: canonical(path)}
-	for _, repo := range repos {
-		r := tui.Repo{Repo: repo.Repo}
-		r.Dir = under(path, root.Dir, repo.Dir)
-		if repo.Stale != nil {
-			r.Stale = repo.Stale.Error()
+// loaded is what the rail shows of res, read just now: the roots named
+// with ~ for the home dir, and the workspaces when res holds them. errs
+// are other problems to show.
+func loaded(res herdr.Result, errs ...error) tui.Loaded {
+	l := tui.Loaded{At: time.Now(), Problems: messages(res.Errs)}
+	for _, err := range errs {
+		if err != nil {
+			l.Problems = append(l.Problems, err.Error())
 		}
-		root.Repos = append(root.Repos, r)
 	}
-	return root
-}
-
-// under returns dir, which lies under the root at path, as it lies under
-// canon, the root's path with symlinks resolved: below the root, discovery
-// follows no symlinks.
-func under(path, canon, dir string) string {
-	rel, err := filepath.Rel(path, dir)
-	if err != nil {
-		return dir
+	for _, root := range res.Roots {
+		r := tui.Root{Name: tildePath(root.Path), Dir: root.Dir}
+		for _, repo := range root.Repos {
+			r.Repos = append(r.Repos, tui.Repo{Repo: repo.Repo, Stale: errText(repo.Stale)})
+		}
+		l.Roots = append(l.Roots, r)
 	}
-	return filepath.Join(canon, rel)
+	// A session always has a workspace, the rail's own; with none, the
+	// snapshot could not be read.
+	l.WorkspacesRead = len(res.Workspaces) > 0
+	for _, w := range res.Workspaces {
+		l.Workspaces = append(l.Workspaces, tui.Workspace{ID: w.ID, Label: w.Label, Root: w.Root, Repo: w.Repo})
+	}
+	return l
 }
 
 // canonical returns path cleaned and with symlinks resolved, or only

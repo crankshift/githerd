@@ -54,10 +54,11 @@ func EnvFrom(getenv func(string) string) (Env, error) {
 	return env, nil
 }
 
-// Result is what a sync found and reported.
+// Result is what a sync found and reported, or what Scan or Look found.
 type Result struct {
 	// Ran is false when the sync did not run: the event called for none,
-	// or another sync was running and runs once more in its place.
+	// or another sync was running and runs once more in its place. It is
+	// false for Scan and Look, which report nothing.
 	Ran        bool
 	Roots      []Root      // the configured roots, in roots-file order
 	Workspaces []Workspace // every workspace of the session, in sidebar order
@@ -68,24 +69,49 @@ type Result struct {
 
 // Root is a configured root and the state of its repos.
 type Root struct {
-	Path  string
+	Path string // as the roots file lists it, with ~ expanded
+	// Dir is Path with symlinks resolved, so it matches pane cwds however
+	// they are spelled. The repos are found under it, so their dirs have
+	// symlinks resolved too: discovery follows none below the root.
+	Dir   string
 	Repos []Repo // in path order; the root first when it is a repo
-	canon string // Path with symlinks resolved, for matching pane cwds
 }
 
 // Repo is the state of one repo under a root.
 type Repo struct {
 	status.Repo
-	Stale error  // why its last fetch failed, so behind may be out of date; nil when it didn't fail
-	canon string // Dir with symlinks resolved
+	Stale error // why its last fetch failed, so behind may be out of date; nil when it didn't fail
 }
 
 // Workspace is a Herdr workspace and where its first pane's cwd lies.
 type Workspace struct {
 	ID    string
 	Label string
-	Root  string // path of the root containing the cwd; empty when outside every root
-	Repo  string // dir of the deepest nested repo containing the cwd; empty for a root workspace
+	Root  string // Dir of the root containing the cwd; empty when outside every root
+	Repo  string // Dir of the deepest nested repo containing the cwd; empty for a root workspace
+}
+
+// Scan reads the repos under the configured roots from disk, as a sync
+// does before its first round of reports: their state, and whether their
+// last fetch failed. It fetches nothing and asks Herdr nothing, so it is
+// quick. What went wrong is in the Result's Errs.
+func Scan(ctx context.Context, env Env) Result {
+	var res Result
+	res.Roots, _, res.Errs = scanRoots(ctx, env.ConfigDir)
+	return res
+}
+
+// Look is Scan with the workspaces of the session, mapped through the
+// snapshot as Sync maps them. It reports nothing and takes no lock, so it
+// can run while a sync does. It fails when it can't read the snapshot.
+func Look(ctx context.Context, env Env) (Result, error) {
+	res := Scan(ctx, env)
+	snap, err := cli{bin: env.Bin}.snapshot(ctx)
+	if err != nil {
+		return res, err
+	}
+	res.Workspaces, _ = mapWorkspaces(res.Roots, snap)
+	return res, nil
 }
 
 // Sync reports the state of every repo under the configured roots to the
@@ -146,35 +172,15 @@ func worthSyncing(eventJSON string) bool {
 // reports again to the workspaces whose tokens that changed.
 func syncOnce(ctx context.Context, env Env) (Result, error) {
 	var res Result
-	paths, errs := readRoots(filepath.Join(env.ConfigDir, rootsFile))
-	res.Errs = append(res.Errs, errs...)
 	var dirs []string
-	res.Roots, dirs, errs = scan(ctx, paths)
-	res.Errs = append(res.Errs, errs...)
+	res.Roots, dirs, res.Errs = scanRoots(ctx, env.ConfigDir)
 	herdr := cli{bin: env.Bin}
 	snap, err := herdr.snapshot(ctx)
 	if err != nil {
 		return res, err
 	}
-
 	var targets []target
-	for _, sw := range snap.Workspaces {
-		w := Workspace{ID: sw.ID, Label: sw.Label}
-		t := target{id: sw.ID}
-		t.root, t.repo = locate(res.Roots, snap.firstPaneCwd(sw.ID))
-		if t.root != nil {
-			w.Root = t.root.Path
-		}
-		if t.repo != nil {
-			w.Repo = t.repo.Dir
-		}
-		res.Workspaces = append(res.Workspaces, w)
-		// Outside every root, a workspace gets a report only to clear what
-		// githerd reported to it earlier.
-		if t.root != nil || hasAny(sw.Tokens, tokenNames) {
-			targets = append(targets, t)
-		}
-	}
+	res.Workspaces, targets = mapWorkspaces(res.Roots, snap)
 
 	sent, errs, err := reportRound(ctx, herdr, env.StateDir, targets, nil)
 	res.Errs = append(res.Errs, errs...)
@@ -185,6 +191,33 @@ func syncOnce(ctx context.Context, env Env) (Result, error) {
 	_, errs, err = reportRound(ctx, herdr, env.StateDir, targets, sent)
 	res.Errs = append(res.Errs, errs...)
 	return res, err
+}
+
+// mapWorkspaces maps each workspace of snap through its first pane's cwd
+// to the root and the repo of roots it lies in. It returns them with the
+// targets of a sync's reports: the workspaces inside a root, and those
+// outside every root that carry tokens githerd reported earlier, to clear.
+// The targets point into roots, so they report what roots hold when they
+// do.
+func mapWorkspaces(roots []Root, snap snapshot) ([]Workspace, []target) {
+	var workspaces []Workspace
+	var targets []target
+	for _, sw := range snap.Workspaces {
+		w := Workspace{ID: sw.ID, Label: sw.Label}
+		t := target{id: sw.ID}
+		t.root, t.repo = locate(roots, snap.firstPaneCwd(sw.ID))
+		if t.root != nil {
+			w.Root = t.root.Dir
+		}
+		if t.repo != nil {
+			w.Repo = t.repo.Dir
+		}
+		workspaces = append(workspaces, w)
+		if t.root != nil || hasAny(sw.Tokens, tokenNames) {
+			targets = append(targets, t)
+		}
+	}
+	return workspaces, targets
 }
 
 // target is a workspace githerd reports to: a mapped workspace with its
@@ -263,17 +296,20 @@ func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
 	return errs
 }
 
-// scan finds the repos under the roots at paths and reads their state, and
-// returns the roots and the dirs of all their repos. Roots that nest share
-// their repos, which are read once and listed once in dirs.
-func scan(ctx context.Context, paths []string) ([]Root, []string, []error) {
-	var errs []error
+// scanRoots reads the roots file in configDir, finds the repos under each
+// root and reads their state. It returns the roots, the dirs of all their
+// repos, and what went wrong. Roots that nest share their repos, which are
+// read once and listed once in dirs.
+func scanRoots(ctx context.Context, configDir string) ([]Root, []string, []error) {
+	paths, errs := readRoots(RootsFile(configDir))
+	roots := make([]Root, len(paths))
 	found := make([][]string, len(paths)) // repo dirs of each root
 	var dirs []string                     // repo dirs of every root, once each
 	seen := map[string]bool{}
 	for i, path := range paths {
+		roots[i] = Root{Path: path, Dir: canonical(path)}
 		var err error
-		if found[i], err = discovery.Repos(path, discovery.DefaultDepth); err != nil {
+		if found[i], err = discovery.Repos(roots[i].Dir, discovery.DefaultDepth); err != nil {
 			errs = append(errs, fmt.Errorf("root %s: %w", path, err))
 		}
 		for _, dir := range found[i] {
@@ -292,12 +328,10 @@ func scan(ctx context.Context, paths []string) ([]Root, []string, []error) {
 		byDir[r.Dir] = r
 	}
 
-	roots := make([]Root, len(paths))
-	for i, path := range paths {
-		roots[i] = Root{Path: path, canon: canonical(path)}
+	for i := range roots {
 		for _, dir := range found[i] {
 			if r, ok := byDir[dir]; ok { // an unreadable repo is left out
-				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, Stale: stale[dir], canon: underCanon(roots[i], dir)})
+				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, Stale: stale[dir]})
 			}
 		}
 	}
@@ -313,17 +347,6 @@ func staleByDir(outcomes []fetch.Outcome) map[string]error {
 		}
 	}
 	return stale
-}
-
-// underCanon returns dir, which lies under root, with symlinks resolved.
-// Discovery follows no symlinks below the root, so only the root's own
-// path can hold any.
-func underCanon(root Root, dir string) string {
-	rel, err := filepath.Rel(root.Path, dir)
-	if err != nil {
-		return canonical(dir)
-	}
-	return filepath.Join(root.canon, rel)
 }
 
 // canonical returns path cleaned and with symlinks resolved, or only
@@ -345,7 +368,7 @@ func locate(roots []Root, cwd string) (*Root, *Repo) {
 	cwd = canonical(cwd)
 	var root *Root
 	for i := range roots {
-		if within(cwd, roots[i].canon) && (root == nil || len(roots[i].canon) > len(root.canon)) {
+		if within(cwd, roots[i].Dir) && (root == nil || len(roots[i].Dir) > len(root.Dir)) {
 			root = &roots[i]
 		}
 	}
@@ -355,7 +378,7 @@ func locate(roots []Root, cwd string) (*Root, *Repo) {
 	var repo *Repo
 	for i := range root.Repos {
 		r := &root.Repos[i]
-		if r.canon != root.canon && within(cwd, r.canon) && (repo == nil || len(r.canon) > len(repo.canon)) {
+		if r.Dir != root.Dir && within(cwd, r.Dir) && (repo == nil || len(r.Dir) > len(repo.Dir)) {
 			repo = r
 		}
 	}

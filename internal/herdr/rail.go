@@ -101,10 +101,6 @@ func MarkRail(ctx context.Context, env Env, pane string) error {
 // RootsFile returns the path of the roots file in the plugin config dir.
 func RootsFile(configDir string) string { return filepath.Join(configDir, rootsFile) }
 
-// ReadRoots returns the roots that the roots file in the plugin config dir
-// lists, as Sync reads them, and the problems with its lines.
-func ReadRoots(configDir string) ([]string, []error) { return readRoots(RootsFile(configDir)) }
-
 // OpenedFrom returns the cwd of the pane a plugin pane was opened from, read
 // from HERDR_PLUGIN_CONTEXT_JSON: for a split, the pane it split, as it was
 // at open time. It returns "" when the context doesn't say.
