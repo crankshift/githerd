@@ -102,3 +102,63 @@ func TestStatusShowsDetachedCommitWithoutCountingItAsNeedingAttention(t *testing
 		"repos/tools/lint-rules  "+pinned+"  0            0      0       -         detached\n"+
 		"1 of 2 repos need attention\n")
 }
+
+func TestStatusFindsTheRootAndNestedReposButSkipsHiddenDirsAndNodeModules(t *testing.T) {
+	f := gitfixture.New(t)
+	root := f.Clone(f.Remote("work"), "work")
+	f.Commit(root, ".gitignore", "repos/\nsandbox/\nnode_modules/\n.cache/\n", "Ignore the clones")
+	f.Git(root, "push", "--quiet")
+
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "worktree", "add", "--quiet", "-b", "hotfix", "../api-hotfix", "origin/main")
+
+	experiments := f.Init("work/sandbox/experiments")
+	f.Commit(experiments, ".gitignore", "data/\n", "Ignore the data clone")
+	f.Clone(f.Remote("data"), "work/sandbox/experiments/data")
+
+	f.Clone(f.Remote("mirror"), "work/.cache/mirror")
+	f.Clone(f.Remote("left-pad"), "work/node_modules/left-pad")
+
+	got := githerd(t, f.Env(), f.Path("."), "status", root)
+
+	assertOutput(t, got, ""+
+		"REPO                      BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+		".                         main    0            0      0       origin/main\n"+
+		"repos/acme/api            main    0            0      0       origin/main\n"+
+		"repos/acme/api-hotfix     hotfix  0            0      0       origin/main\n"+
+		"sandbox/experiments       main    0            1      0       -            no upstream\n"+
+		"sandbox/experiments/data  main    0            0      0       origin/main\n"+
+		"1 of 5 repos need attention\n")
+}
+
+func TestStatusScansThreeLevelsBelowTheRootUnlessDepthIsSet(t *testing.T) {
+	f := gitfixture.New(t)
+	f.Clone(f.Remote("scripts"), "work/scripts")
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Commit(api, ".gitignore", "vendor/\n", "Ignore vendored clones")
+	f.Git(api, "push", "--quiet")
+	f.Clone(f.Remote("sdk"), "work/repos/acme/api/vendor/sdk")
+	root := f.Path("work")
+
+	t.Run("default", func(t *testing.T) {
+		assertOutput(t, githerd(t, f.Env(), root, "status"), ""+
+			"REPO            BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+			"repos/acme/api  main    0            0      0       origin/main\n"+
+			"scripts         main    0            0      0       origin/main\n"+
+			"0 of 2 repos need attention\n")
+	})
+	t.Run("shallower, flag before root", func(t *testing.T) {
+		assertOutput(t, githerd(t, f.Env(), f.Path("."), "status", "--depth", "2", root), ""+
+			"REPO     BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+			"scripts  main    0            0      0       origin/main\n"+
+			"0 of 1 repos need attention\n")
+	})
+	t.Run("deeper, flag after root", func(t *testing.T) {
+		assertOutput(t, githerd(t, f.Env(), f.Path("."), "status", root, "--depth", "5"), ""+
+			"REPO                       BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+			"repos/acme/api             main    0            0      0       origin/main\n"+
+			"repos/acme/api/vendor/sdk  main    0            0      0       origin/main\n"+
+			"scripts                    main    0            0      0       origin/main\n"+
+			"0 of 3 repos need attention\n")
+	})
+}

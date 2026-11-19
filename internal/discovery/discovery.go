@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultDepth is how many directory levels below the root are scanned
@@ -42,10 +43,16 @@ func walk(dir string, depth int, repos *[]string) {
 		return // an unreadable directory hides no repos we could report
 	}
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !skipped(e.Name()) {
 			walk(filepath.Join(dir, e.Name()), depth-1, repos)
 		}
 	}
+}
+
+// skipped reports whether a directory named name is never scanned: hidden
+// directories, .git among them, and node_modules.
+func skipped(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "node_modules"
 }
 
 // isRepo reports whether dir contains .git, as a directory or as a file.

@@ -22,14 +22,23 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	depth := fs.Int("depth", discovery.DefaultDepth, "directory levels below the root to scan")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(positional) > 1 {
+		fmt.Fprintf(stderr, "githerd status: one root at most, got %d\n", len(positional))
+		return 2
+	}
+	if *depth < 0 {
+		fmt.Fprintln(stderr, "githerd status: --depth must not be negative")
 		return 2
 	}
 	root := "."
-	if fs.NArg() > 0 {
-		root = fs.Arg(0)
+	if len(positional) == 1 {
+		root = positional[0]
 	}
-	root, err := filepath.Abs(root)
+	root, err = filepath.Abs(root)
 	if err != nil {
 		fmt.Fprintln(stderr, "githerd:", err)
 		return 1
@@ -50,6 +59,26 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	return 0
+}
+
+// parseInterspersed parses args with fs, allowing flags after positional
+// arguments, and returns the positional arguments.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		if consumed := len(args) - len(rest); consumed > 0 && args[consumed-1] == "--" {
+			return append(positional, rest...), nil // everything after -- is positional
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
 }
 
 // readAll reads every repo in parallel and keeps the order of dirs. Repos
