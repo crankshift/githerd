@@ -103,9 +103,28 @@ func fetchOne(ctx context.Context, dir string, opts Options) Outcome {
 	if env, o.Err = fetchEnv(ctx, dir); o.Err != nil {
 		return o
 	}
+	var head string
+	if head, o.Err = status.FetchHead(ctx, dir); o.Err != nil {
+		return o
+	}
 	_, o.Err = gitEnv(ctx, dir, env, "fetch", "--quiet", o.Remote)
 	o.Fetched = o.Err == nil
+	if o.Err != nil {
+		markFailed(head)
+	}
 	return o
+}
+
+// markFailed leaves the FETCH_HEAD at path empty, with now as its mtime, so
+// the TTL counts from the failure. Git empties FETCH_HEAD when a fetch
+// starts, but a fetch that hangs until it is killed leaves the start time,
+// and one that fails late can leave some of what it fetched. If the file
+// can't be written, the next run simply fetches again.
+func markFailed(path string) {
+	now := time.Now()
+	if os.WriteFile(path, nil, 0o644) == nil {
+		os.Chtimes(path, now, now)
+	}
 }
 
 // batchSSH is the SSH command for a fetch when the user has set none: in

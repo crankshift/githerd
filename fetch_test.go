@@ -135,6 +135,26 @@ func TestStatusFetchRetriesAStaleRepoOnlyAfterTheTTLOrWithForce(t *testing.T) {
 	assertFetch(true, refused, "--ttl", "2m")
 }
 
+// A failed fetch leaves FETCH_HEAD empty with the time it failed as its
+// mtime, so the TTL counts from the failure, even for a fetch that hung
+// until it timed out.
+func TestStatusFetchCountsTheTTLFromWhenAFetchTimedOut(t *testing.T) {
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	args := []string{"status", "--json", "--fetch", "--fetch-timeout", "1s", "--ttl", "800ms"}
+
+	got := githerd(t, f.Env(), f.Path("work"), args...)
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{"repos/acme/api": jsonString(t, "timed out after 1s")})
+
+	got = githerd(t, f.Env(), f.Path("work"), args...)
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{"repos/acme/api": jsonString(t, "last fetch failed")})
+	if calls := f.SSHCalls(); len(calls) != 1 {
+		t.Errorf("want one fetch, the one that timed out less than the TTL ago; got ssh calls %q", calls)
+	}
+}
+
 // A failed fetch marks the repo stale with git's reason, and the table
 // notes it.
 func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
