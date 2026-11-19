@@ -1,11 +1,13 @@
 package herdr
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 // Files in the plugin state dir that keep syncs to one at a time.
@@ -39,6 +41,35 @@ func lock(dir string) (*syncLock, error) {
 			return nil, err
 		}
 	}
+	return held(f, mark)
+}
+
+// waitLock takes the sync lock in dir, waiting while another sync holds
+// it, and clears the mark. It leaves no mark: the sync that waits runs
+// after the one that holds the lock, which covers what a mark asks for.
+func waitLock(ctx context.Context, dir string) (*syncLock, error) {
+	for {
+		f, err := tryLock(filepath.Join(dir, lockFile))
+		if err != nil {
+			return nil, err
+		}
+		if f != nil {
+			return held(f, filepath.Join(dir, markFile))
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(lockPoll):
+		}
+	}
+}
+
+// lockPoll is how often waitLock tries the lock.
+const lockPoll = 50 * time.Millisecond
+
+// held returns the lock held on f, once it has cleared the mark at path:
+// the sync about to run covers what the mark asked for.
+func held(f *os.File, mark string) (*syncLock, error) {
 	if err := os.Remove(mark); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		f.Close()
 		return nil, err

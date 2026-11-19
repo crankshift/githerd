@@ -122,24 +122,36 @@ func Look(ctx context.Context, env Env) (Result, error) {
 // so a burst costs two syncs and its last trigger is not lost. When another
 // sync takes the lock first, that one runs once more instead, and Sync
 // returns the run it did.
-func Sync(ctx context.Context, env Env) (Result, error) {
+//
+// The repos whose dirs are in force are fetched whatever the TTL, as the
+// rail's f asks. A sync with any waits for the lock instead of leaving the
+// mark, so that its fetches run: under the lock, they never race another
+// sync's fetch of the same repo. The rerun fetches with the TTL alone.
+func Sync(ctx context.Context, env Env, force ...string) (Result, error) {
 	if !worthSyncing(env.Event) {
 		return Result{}, nil
 	}
 	if err := os.MkdirAll(env.StateDir, 0o755); err != nil {
 		return Result{}, err
 	}
-	l, err := lock(env.StateDir)
+	var l *syncLock
+	var err error
+	if len(force) > 0 {
+		l, err = waitLock(ctx, env.StateDir)
+	} else {
+		l, err = lock(env.StateDir)
+	}
 	if err != nil || l == nil {
 		return Result{}, err
 	}
 	for {
-		res, err := syncOnce(ctx, env)
+		res, err := syncOnce(ctx, env, force)
 		res.Ran = true
 		rerun := l.unlock()
 		if err != nil || !rerun {
 			return res, err
 		}
+		force = nil
 		if l, err = lock(env.StateDir); err != nil || l == nil {
 			return res, err
 		}
@@ -169,7 +181,7 @@ func worthSyncing(eventJSON string) bool {
 // the repos hold locally, so a slow or hanging remote can't hold up the
 // sidebar. Then the repos due for a fetch are fetched, and the second round
 // reports again to the workspaces whose tokens that changed.
-func syncOnce(ctx context.Context, env Env) (Result, error) {
+func syncOnce(ctx context.Context, env Env, force []string) (Result, error) {
 	var res Result
 	var dirs []string
 	res.Roots, dirs, res.Errs = scanRoots(ctx, env.ConfigDir)
@@ -186,7 +198,7 @@ func syncOnce(ctx context.Context, env Env) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	res.Errs = append(res.Errs, fetchDue(ctx, res.Roots, dirs)...)
+	res.Errs = append(res.Errs, fetchDue(ctx, res.Roots, dirs, force)...)
 	_, errs, err = reportRound(ctx, herdr, env.StateDir, targets, sent)
 	res.Errs = append(res.Errs, errs...)
 	return res, err
@@ -266,11 +278,23 @@ func reportRound(ctx context.Context, herdr cli, stateDir string, targets []targ
 	return now, errs, nil
 }
 
-// fetchDue fetches the repos in dirs due for it and rereads those it
-// fetched, updating the repos of roots in place: their state, and whether
-// they are stale.
-func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
-	outcomes := fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL})
+// fetchDue fetches the repos in dirs due for it, and those in force
+// whatever the TTL, and rereads those it fetched, updating the repos of
+// roots in place: their state, and whether they are stale.
+func fetchDue(ctx context.Context, roots []Root, dirs, force []string) []error {
+	forced := map[string]bool{}
+	for _, dir := range force {
+		forced[dir] = true
+	}
+	var now, due []string
+	for _, dir := range dirs {
+		if forced[dir] {
+			now = append(now, dir)
+		} else {
+			due = append(due, dir)
+		}
+	}
+	outcomes := append(fetch.Run(ctx, now, fetch.Options{Force: true}), fetch.Run(ctx, due, fetch.Options{TTL: fetch.DefaultTTL})...)
 	var fetched []string
 	for _, o := range outcomes {
 		if o.Fetched {

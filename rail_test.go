@@ -91,6 +91,48 @@ func TestRailFetchesEveryRepoAtOnceWithF(t *testing.T) {
 	}
 }
 
+// f fetches in a sync, under the sync lock, so it never races a hook's
+// fetch of the same repo: it waits for the hook's sync to end, then fetches
+// whatever the TTL.
+func TestRailForcesItsFetchUnderTheSyncLock(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api))
+	hook := h.startSync("HERDR_PLUGIN_EVENT=workspace.focused")
+	h.waitForCalls(2) // the snapshot and the first round: the hook's sync fetches next, and hangs
+	term := newPTY(t, 60, 20)
+
+	exited := h.startRail(term, api)
+	pos := term.waitFor(0, "↻ ")
+	term.typed("f")
+	pos = term.waitFor(pos, "fetching…")
+	term.waitFor(pos, "↻ ")
+	term.typed("q")
+	if err := <-exited; err != nil {
+		t.Fatalf("the rail exited with %v", err)
+	}
+	if got := hook(); got.code != 0 || got.stderr != "" {
+		t.Errorf("the hook's sync: want exit 0 and no output; got %+v", got)
+	}
+
+	var fetches []string
+	for _, call := range f.SSHCalls() {
+		if strings.HasPrefix(call, "outlived the fetch") {
+			fetches = append(fetches, "ended")
+		} else {
+			fetches = append(fetches, "started")
+		}
+	}
+	if want := []string{"started", "ended", "started", "ended"}; !slices.Equal(fetches, want) {
+		t.Errorf("fetches over ssh %q, want the hook's, then f's: %q", fetches, want)
+	}
+}
+
 // The rail's first view, read from disk before the sync ends, already
 // shows a repo whose last fetch failed as stale.
 func TestRailShowsStaleReposBeforeTheSyncEnds(t *testing.T) {

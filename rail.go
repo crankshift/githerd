@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/herdr"
 	"github.com/crankshift/githerd/internal/repopage"
 	"github.com/crankshift/githerd/internal/term"
@@ -223,15 +222,13 @@ func (r *rail) readKeys(ctx context.Context) {
 	}
 }
 
-// refresh runs the refresh `githerd herdr sync` runs, after fetching the
-// repos in force whatever the TTL. When another sync holds the lock, that
-// sync runs once more in this one's place, and the rail reads the repos from
-// disk and the workspaces from the snapshot instead, which take no lock.
+// refresh runs the refresh `githerd herdr sync` runs, fetching the repos in
+// force whatever the TTL. When another sync holds the lock, that sync runs
+// once more in this one's place, and the rail reads the repos from disk and
+// the workspaces from the snapshot instead, which take no lock. A refresh
+// with repos to force waits for the lock instead.
 func refresh(ctx context.Context, env herdr.Env, force []string) tui.Loaded {
-	if len(force) > 0 {
-		fetch.Run(ctx, force, fetch.Options{Force: true}) // the sync reports the repos that failed
-	}
-	res, err := herdr.Sync(ctx, env)
+	res, err := herdr.Sync(ctx, env, force...)
 	var lookErr error
 	if !res.Ran {
 		res, lookErr = herdr.Look(ctx, env)
