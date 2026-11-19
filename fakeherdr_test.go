@@ -364,6 +364,47 @@ func tokensByWorkspace(t *testing.T, calls [][]string) map[string]tokens {
 	return byID
 }
 
+// round is the reports a sync sent under one --seq, by workspace id.
+type round struct {
+	seq    uint64
+	tokens map[string]tokens
+}
+
+// rounds groups the reports among calls into rounds, in call order. It
+// fails the test if a workspace got two reports in one round.
+func rounds(t *testing.T, calls [][]string) []round {
+	t.Helper()
+	var rs []round
+	for _, rep := range reports(t, calls) {
+		if len(rs) == 0 || rs[len(rs)-1].seq != rep.seq {
+			rs = append(rs, round{seq: rep.seq, tokens: map[string]tokens{}})
+		}
+		r := rs[len(rs)-1]
+		if _, dup := r.tokens[rep.workspace]; dup {
+			t.Fatalf("workspace %s got two reports under --seq %d: %q", rep.workspace, rep.seq, calls)
+		}
+		r.tokens[rep.workspace] = rep.tokens
+	}
+	return rs
+}
+
+// assertRounds fails unless the reports among calls came in the rounds of
+// want, each under a higher --seq than the one before.
+func assertRounds(t *testing.T, calls [][]string, want ...map[string]tokens) {
+	t.Helper()
+	got := rounds(t, calls)
+	var tokensOf []map[string]tokens
+	for i, r := range got {
+		tokensOf = append(tokensOf, r.tokens)
+		if i > 0 && r.seq <= got[i-1].seq {
+			t.Errorf("round %d has --seq %d, not above %d", i+1, r.seq, got[i-1].seq)
+		}
+	}
+	if !reflect.DeepEqual(tokensOf, want) {
+		t.Errorf("reports by round:\n got %v\nwant %v", tokensOf, want)
+	}
+}
+
 // assertSynced fails unless the sync exited 0 with no output and reported
 // exactly want.
 func (h *fakeHerdr) assertSynced(got result, want map[string]tokens) {
