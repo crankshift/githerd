@@ -98,10 +98,10 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
   - They never prompt: terminal prompts are off, and SSH runs in batch mode unless the user has set their own SSH command.
   - A failed fetch marks the repo stale and keeps the error message.
   - Defaults: `githerd status` does not fetch; the plugin uses a 15-minute TTL.
-- **Status command.** `githerd status [root] [--json] [--fetch] [--depth N]`. It prints a table (repo, branch, uncommitted, ahead, behind, upstream, note) and a summary line. JSON mode prints the same data. The JSON shape below came from the prototype:
+- **Status command.** `githerd status [root] [--json] [--fetch] [--depth N]`. It prints a table (repo, branch, uncommitted, ahead, behind, upstream, note) and a summary line. JSON mode prints the same data, with `root` as an absolute path and each `path` relative to it. The JSON shape below came from the prototype:
 
   ```json
-  {"root": "~/work", "repos": [
+  {"root": "/home/you/work", "repos": [
     {"path": "repos/acme/api", "branch": "feature/login", "detached": null,
      "upstream": "origin/feature/login", "uncommitted": 3, "ahead": 2, "behind": 0,
      "needsAttention": true, "stale": null, "fetchedAt": "…"}

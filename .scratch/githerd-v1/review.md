@@ -34,7 +34,7 @@ Judgement calls (smells). Fix the ones where the copies behave differently; fix 
 - [x] P6. `s`/`L` from a zoomed repo page leave the zoom on, so the new split is hidden. Unzoom the rail's pane first.
 - [x] P7. The rail's key-hint line omits `L` and `z`.
 - [x] P8. The `tab_bar_right` entry in the README runs githerd outside the plugin, without the hooks' state dir or lock. Add a `sync` action to the manifest and make the README entry `"$HERDR_BIN_PATH" plugin action invoke githerd.sync`. Check the qualified action id form in the research note.
-- [ ] P9. The spec's JSON example shows `"root": "~/work"`; the code prints an absolute path (ticket 01 decision). Update the spec example.
+- [x] P9. The spec's JSON example shows `"root": "~/work"`; the code prints an absolute path (ticket 01 decision). Update the spec example.
 
 ## Accepted as recorded
 
