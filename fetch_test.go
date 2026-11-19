@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,11 +145,50 @@ func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
 	})
 }
 
+// Fetches run in parallel, each with its own timeout, so three hanging
+// remotes cost one timeout, not three, and the healthy repo is still fetched.
+func TestStatusFetchTimesOutHangingRemotesAndMarksThemStale(t *testing.T) {
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	for _, name := range []string{"api", "billing", "web"} {
+		repo := f.Clone(f.Remote(name), "work/repos/acme/"+name)
+		f.Git(repo, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/"+name+".git")
+	}
+	docsRemote := f.Remote("docs")
+	f.Clone(docsRemote, "work/repos/acme/docs")
+	f.PushElsewhere(docsRemote, "main", 1)
+
+	start := time.Now()
+	got := githerd(t, f.Env(), f.Path("work"), "status", "--json", "--fetch", "--fetch-timeout", "1s")
+	elapsed := time.Since(start)
+
+	timedOut := jsonString(t, "timed out after 1s")
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{
+		"repos/acme/api": timedOut, "repos/acme/billing": timedOut, "repos/acme/web": timedOut,
+		"repos/acme/docs": "null",
+	})
+	assertField(t, "behind", field(t, got, "behind"), map[string]string{
+		"repos/acme/api": "0", "repos/acme/billing": "0", "repos/acme/web": "0",
+		"repos/acme/docs": "1",
+	})
+	if elapsed > 2500*time.Millisecond {
+		t.Errorf("status took %v: want about one 1s timeout for all three hanging fetches", elapsed)
+	}
+
+	// A killed fetch takes its ssh down with it.
+	time.Sleep(time.Until(start.Add(gitfixture.HangTime + 500*time.Millisecond)))
+	for _, call := range f.SSHCalls() {
+		if strings.HasPrefix(call, "outlived the fetch") {
+			t.Errorf("ssh kept running after its fetch timed out: %s", call)
+		}
+	}
+}
+
 func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("web"), "work/repos/acme/web")
 
-	for _, args := range [][]string{{"--ttl", "5m"}, {"--force"}} {
+	for _, args := range [][]string{{"--ttl", "5m"}, {"--force"}, {"--fetch-timeout", "5s"}} {
 		got := githerd(t, f.Env(), f.Path("work"), append([]string{"status"}, args...)...)
 		if want := "githerd status: " + args[0] + " needs --fetch\n"; got.code != 2 || got.stdout != "" || got.stderr != want {
 			t.Errorf("status %v: want exit 2 and stderr %q; got %+v", args, want, got)

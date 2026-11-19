@@ -29,18 +29,23 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	doFetch := fs.Bool("fetch", false, "fetch each repo's upstream remote before reporting")
 	ttl := fs.Duration("ttl", fetch.DefaultTTL, "with --fetch, skip repos fetched less than this long ago")
 	force := fs.Bool("force", false, "with --fetch, fetch every repo, whatever the TTL")
+	timeout := fs.Duration("fetch-timeout", fetch.DefaultTimeout, "with --fetch, give up on a repo's fetch after this long")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return 2
 	}
 	if !*doFetch {
-		if name := setFlag(fs, "ttl", "force"); name != "" {
+		if name := setFlag(fs, "ttl", "force", "fetch-timeout"); name != "" {
 			fmt.Fprintf(stderr, "githerd status: --%s needs --fetch\n", name)
 			return 2
 		}
 	}
 	if *ttl < 0 {
 		fmt.Fprintln(stderr, "githerd status: --ttl must not be negative")
+		return 2
+	}
+	if *timeout <= 0 {
+		fmt.Fprintln(stderr, "githerd status: --fetch-timeout must be positive")
 		return 2
 	}
 	if len(positional) > 1 {
@@ -68,7 +73,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	stale := map[string]fetch.Outcome{} // failed fetches by repo dir
 	if *doFetch {
-		for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force}) {
+		for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force, Timeout: *timeout}) {
 			if o.Err != nil {
 				stale[o.Dir] = o
 			}
