@@ -3,6 +3,8 @@ package main_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +179,48 @@ func TestSyncClearsItsTokensFromWorkspacesOutsideEveryRoot(t *testing.T) {
 	}
 }
 
+// Herdr ignores a report whose --seq is not above the last one from the
+// same source, so each sync's --seq is the Unix time in milliseconds, or the
+// previous sync's plus one when the clock is behind it.
+func TestSyncSequencesEachSyncAfterTheLast(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	web := f.Clone(f.Remote("web"), "work/repos/acme/web")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("api", api), at("web", web))
+	seqs := func() []uint64 {
+		t.Helper()
+		if got := h.sync(); got.code != 0 {
+			t.Fatalf("sync failed: %+v", got)
+		}
+		var seqs []uint64
+		for _, rep := range reports(t, h.calls()) {
+			seqs = append(seqs, rep.seq)
+		}
+		return seqs
+	}
+
+	before := uint64(time.Now().UnixMilli())
+	first := seqs()
+	after := uint64(time.Now().UnixMilli())
+	if len(first) != 2 || first[0] < before || first[0] > after || first[1] != first[0] {
+		t.Errorf("want both reports sequenced with the Unix time in ms, %d to %d; got %v", before, after, first)
+	}
+	if second := seqs(); second[0] <= first[0] {
+		t.Errorf("want the next sync sequenced after %d; got %v", first[0], second)
+	}
+
+	ahead := uint64(time.Now().Add(time.Hour).UnixMilli()) // as if the clock moved back an hour
+	writeFile(t, filepath.Join(h.stateDir(), "seq"), strconv.FormatUint(ahead, 10)+"\n")
+	if got, want := seqs(), []uint64{ahead + 1, ahead + 1}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after %d, want %v; got %v", ahead, want, got)
+	}
+	if got, want := seqs(), []uint64{ahead + 2, ahead + 2}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after %d, want %v; got %v", ahead+1, want, got)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.
@@ -267,6 +311,13 @@ func ptr[T any](v T) *T { return &v }
 func symlink(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

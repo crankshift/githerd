@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/crankshift/githerd/internal/discovery"
 	"github.com/crankshift/githerd/internal/fetch"
@@ -93,7 +92,10 @@ func Sync(ctx context.Context, env Env) (Result, error) {
 	res.Roots, errs = scan(ctx, paths)
 	res.Errs = append(res.Errs, errs...)
 
-	seq := uint64(time.Now().UnixMilli())
+	seq, err := nextSeq(env.StateDir)
+	if err != nil {
+		return res, err
+	}
 	for _, sw := range snap.Workspaces {
 		w := Workspace{ID: sw.ID, Label: sw.Label}
 		root, repo := locate(res.Roots, snap.firstPaneCwd(sw.ID))
