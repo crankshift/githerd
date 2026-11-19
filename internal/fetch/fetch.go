@@ -10,10 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
+	"github.com/crankshift/githerd/internal/parallel"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -23,7 +23,7 @@ const (
 	DefaultTimeout = 20 * time.Second // how long one repo's fetch may take
 )
 
-// workers bounds how many repos are fetched at once.
+// workers bounds how many repos are fetched, or looked at, at once.
 const workers = 8
 
 // errLastFailed is why a repo is stale when its last fetch failed and was
@@ -57,14 +57,14 @@ func Run(ctx context.Context, dirs []string, opts Options) []Outcome {
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultTimeout
 	}
-	return each(dirs, func(dir string) Outcome { return fetchRepo(ctx, dir, opts) })
+	return parallel.Map(dirs, workers, func(dir string) Outcome { return fetchRepo(ctx, dir, opts) })
 }
 
 // Last returns, without fetching anything, the outcome Run would give each
 // repo in dirs if none were due: Err is set for a repo whose last fetch
 // failed. It shows which repos are stale before Run has had its say.
 func Last(ctx context.Context, dirs []string) []Outcome {
-	return each(dirs, func(dir string) Outcome {
+	return parallel.Map(dirs, workers, func(dir string) Outcome {
 		o, _, err := lastFetch(ctx, dir)
 		if err != nil {
 			o.Err = err
@@ -88,25 +88,6 @@ func MarkStale(repos []status.Repo, outcomes []Outcome) {
 			}
 		}
 	}
-}
-
-// each runs do for every dir, a few at a time, and returns the outcomes in
-// the order of dirs.
-func each(dirs []string, do func(dir string) Outcome) []Outcome {
-	outcomes := make([]Outcome, len(dirs))
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	for i, dir := range dirs {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			outcomes[i] = do(dir)
-		}()
-	}
-	wg.Wait()
-	return outcomes
 }
 
 // fetchRepo fetches the repo in dir if it is due, giving up after
