@@ -130,6 +130,13 @@ func (f *Fixture) PushElsewhere(remote, branch string, n int) {
 func (f *Fixture) FetchedAgo(repo string, ago time.Duration) {
 	f.t.Helper()
 	f.Git(repo, "fetch", "--quiet")
+	f.Backdate(repo, ago)
+}
+
+// Backdate sets the mtime of repo's FETCH_HEAD to ago before now, as if its
+// last fetch, whether it worked or failed, had happened then.
+func (f *Fixture) Backdate(repo string, ago time.Duration) {
+	f.t.Helper()
 	path := f.Git(repo, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD")
 	at := time.Now().Add(-ago)
 	if err := os.Chtimes(path, at, at); err != nil {

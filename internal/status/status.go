@@ -104,27 +104,45 @@ func Read(ctx context.Context, dir string) (Repo, error) {
 
 // FetchedAt returns when the repo in dir was last fetched: the mtime of its
 // FETCH_HEAD. It returns the zero time when the repo was never fetched, and
-// also when FETCH_HEAD is empty, because git empties it when a fetch fails.
+// also when its last fetch failed; see LastFetch.
 func FetchedAt(ctx context.Context, dir string) (time.Time, error) {
+	at, failed, err := LastFetch(ctx, dir)
+	if failed {
+		at = time.Time{}
+	}
+	return at, err
+}
+
+// LastFetch returns when the repo in dir was last fetched, from the mtime of
+// its FETCH_HEAD, and whether that fetch failed, which leaves FETCH_HEAD
+// empty. The time is zero when the repo was never fetched.
+func LastFetch(ctx context.Context, dir string) (at time.Time, failed bool, err error) {
+	path, err := FetchHead(ctx, dir)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return info.ModTime(), info.Size() == 0, nil
+}
+
+// FetchHead returns the path of the FETCH_HEAD of the repo in dir, where
+// git records what each fetch brought.
+func FetchHead(ctx context.Context, dir string) (string, error) {
 	out, err := git(ctx, dir, "rev-parse", "--git-path", "FETCH_HEAD")
 	if err != nil {
-		return time.Time{}, err
+		return "", err
 	}
 	path := strings.TrimSpace(string(out))
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(dir, path)
 	}
-	info, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return time.Time{}, nil
-	}
-	if err != nil {
-		return time.Time{}, err
-	}
-	if info.Size() == 0 {
-		return time.Time{}, nil
-	}
-	return info.ModTime(), nil
+	return path, nil
 }
 
 // count runs a git command that prints one number.

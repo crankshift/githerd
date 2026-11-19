@@ -26,6 +26,10 @@ const (
 // workers bounds how many repos are fetched at once.
 const workers = 8
 
+// errLastFailed is why a repo is stale when its last fetch failed and was
+// not retried: the reason it failed is not kept.
+var errLastFailed = errors.New("last fetch failed")
+
 // Options says which repos Run fetches and how long each may take.
 type Options struct {
 	TTL     time.Duration // skip a repo fetched less than TTL ago
@@ -46,8 +50,9 @@ type Outcome struct {
 // and each fetch that outlives opts.Timeout is killed and counts as failed.
 //
 // It skips a repo fetched less than opts.TTL ago, unless opts.Force is set.
-// The clock is the mtime of FETCH_HEAD. Git empties FETCH_HEAD when a fetch
-// fails, so a stale repo is fetched again whatever the TTL.
+// The clock is the mtime of FETCH_HEAD. A failed fetch leaves FETCH_HEAD
+// empty, so a repo whose fetch failed less than opts.TTL ago is skipped too,
+// and stays stale: its Err says the last fetch failed.
 func Run(ctx context.Context, dirs []string, opts Options) []Outcome {
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultTimeout
@@ -85,8 +90,12 @@ func fetchOne(ctx context.Context, dir string, opts Options) Outcome {
 		return o
 	}
 	if !opts.Force {
-		var last time.Time
-		if last, o.Err = status.FetchedAt(ctx, dir); o.Err != nil || time.Since(last) < opts.TTL {
+		last, failed, err := status.LastFetch(ctx, dir)
+		if err != nil || time.Since(last) < opts.TTL {
+			o.Err = err
+			if failed {
+				o.Err = errLastFailed
+			}
 			return o
 		}
 	}
