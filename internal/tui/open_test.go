@@ -208,14 +208,16 @@ const fromPane = "w1:p1"
 
 // s opens a shell in the selected repo beside the rail: it splits the pane
 // the rail was opened from, which is wide, and the rail's own pane only when
-// that one is gone or unknown.
+// that one is gone or unknown. It unzooms the rail's pane first, so the
+// split shows.
 func TestSOpensAShellInTheRepoBesideTheRail(t *testing.T) {
 	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, From: fromPane}, session())
+	unzoom := tui.Zoom{Pane: railPane, Mode: tui.ZoomOff}
 
 	_, cmds := press(m, "s")
-	assertCmds(t, "s on api", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api"})
+	assertCmds(t, "s on api", cmds, unzoom, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api"})
 	_, cmds = press(m, "j", "s")
-	assertCmds(t, "s on billing", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/billing"})
+	assertCmds(t, "s on billing", cmds, unzoom, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/billing"})
 }
 
 // noteLine returns the line above the rail's keys at 50×18, without the
@@ -230,7 +232,7 @@ func noteLine(m tui.Model) string {
 func TestLOpensLazygitInTheRepoWhenItIsOnPath(t *testing.T) {
 	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane, From: fromPane, Lazygit: true}, session())
 	_, cmds := press(m, "L")
-	assertCmds(t, "L with lazygit", cmds, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api", Run: "lazygit"})
+	assertCmds(t, "L with lazygit", cmds, tui.Zoom{Pane: railPane, Mode: tui.ZoomOff}, tui.Split{From: fromPane, Rail: railPane, Dir: "/work/repos/acme/api", Run: "lazygit"})
 
 	m = synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane}, session())
 	m, cmds = press(m, "L")

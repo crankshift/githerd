@@ -94,10 +94,11 @@ func TestRailOpensTheSelectedRepoInHerdr(t *testing.T) {
 	term.waitFor(pos, "⧉billing")
 
 	term.typed("s")
+	unzoom := []string{"pane", "zoom", "--pane", "w1:p9", "--off"}
 	split := []string{"pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", billing, "--focus"}
-	h.expectCalls("s on billing", split)
+	h.expectCalls("s on billing", unzoom, split)
 	term.typed("L")
-	h.expectCalls("L on billing", split, []string{"pane", "run", fakeSplitPane("w1:p1"), "lazygit"})
+	h.expectCalls("L on billing", unzoom, split, []string{"pane", "run", fakeSplitPane("w1:p1"), "lazygit"})
 
 	// o waits while Herdr creates the workspace, so press it until it acts.
 	for deadline := time.Now().Add(10 * time.Second); len(h.peekCalls()) == 0; time.Sleep(100 * time.Millisecond) {
@@ -118,9 +119,10 @@ func TestRailOpensTheSelectedRepoInHerdr(t *testing.T) {
 	}
 }
 
-// s opens the shell in a split to the right of the pane the rail was opened
-// from, so it gets half of that pane rather than of the narrow rail. When
-// that pane is gone, s splits the rail downwards instead.
+// s unzooms the rail's pane, then opens the shell in a split to the right
+// of the pane the rail was opened from, so it gets half of that pane rather
+// than of the narrow rail. When that pane is gone, s splits the rail
+// downwards instead.
 func TestRailOpensTheShellBesideThePaneItWasOpenedFrom(t *testing.T) {
 	t.Parallel()
 	f := gitfixture.New(t)
@@ -136,11 +138,12 @@ func TestRailOpensTheShellBesideThePaneItWasOpenedFrom(t *testing.T) {
 	h.calls()
 
 	term.typed("s")
+	unzoom := []string{"pane", "zoom", "--pane", "w1:p9", "--off"}
 	beside := []string{"pane", "split", "--pane", "w1:p1", "--direction", "right", "--cwd", resolved(t, api), "--focus"}
-	h.expectCalls("s", beside)
+	h.expectCalls("s", unzoom, beside)
 	writeFile(t, filepath.Join(h.dir, fakeClosedFile), "w1:p1\n")
 	term.typed("s")
-	h.expectCalls("s with that pane closed", beside,
+	h.expectCalls("s with that pane closed", unzoom, beside,
 		[]string{"pane", "split", "--pane", "w1:p9", "--direction", "down", "--cwd", resolved(t, api), "--focus"})
 
 	term.typed("q")

@@ -17,15 +17,25 @@ func act(m Model, k Key) (Model, []Cmd) {
 	case "o":
 		return m.open(repo.Dir)
 	case "s":
-		return m, []Cmd{Split{From: m.opts.From, Rail: m.opts.Pane, Dir: repo.Dir}}
+		return m, m.split(Split{Dir: repo.Dir})
 	case "L":
 		if !m.opts.Lazygit {
 			m.note = "lazygit is not on PATH"
 			return m, nil
 		}
-		return m, []Cmd{Split{From: m.opts.From, Rail: m.opts.Pane, Dir: repo.Dir, Run: "lazygit"}}
+		return m, m.split(Split{Dir: repo.Dir, Run: "lazygit"})
 	}
 	return m, nil
+}
+
+// split returns the requests that open the shell s asks for beside the
+// rail. They unzoom the rail's pane first: zoomed, as the repo page is, or the rail after z, the
+// tab would show the rail's pane alone and hide the split. The model can't
+// tell whether it is zoomed, and unzooming a pane that isn't changes
+// nothing.
+func (m Model) split(s Split) []Cmd {
+	s.From, s.Rail = m.opts.From, m.opts.Pane
+	return append(m.zoom(ZoomOff), s)
 }
 
 // selectedRepo returns the repo the actions act on: the repo page's while

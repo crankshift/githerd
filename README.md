@@ -288,7 +288,7 @@ Beside it is the selected line's detail: a file's diff, a whole commit, or a bra
 | `j` / `k`, `↓` / `↑` | move through the lines |
 | `J` / `K` | scroll the diff |
 | `esc`, `h`, `←` | go back to the rail and unzoom |
-| `o`, `s`, `L` | as on the rail, for the page's repo |
+| `o`, `s`, `L` | as on the rail, for the page's repo; `s` and `L` unzoom the pane first, so the new split shows |
 | `f`, `z`, `q`, `ctrl+c` | as on the rail |
 
 ## Limits

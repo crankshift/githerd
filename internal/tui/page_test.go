@@ -461,6 +461,24 @@ func TestRepoPageShowsWhatWentWrong(t *testing.T) {
 	}
 }
 
+// From the repo page, which is zoomed, s and L first unzoom the rail's
+// pane: zoomed, the tab would show the page alone and hide the new split.
+// They do on the rail too, which z may have zoomed.
+func TestSAndLUnzoomTheRailsPaneFirst(t *testing.T) {
+	m := synced(t, apiDir, tui.Options{Pane: railPane, From: fromPane, Lazygit: true}, session())
+	unzoom := tui.Zoom{Pane: railPane, Mode: tui.ZoomOff}
+	shell := tui.Split{From: fromPane, Rail: railPane, Dir: apiDir}
+	lazygit := tui.Split{From: fromPane, Rail: railPane, Dir: apiDir, Run: "lazygit"}
+
+	page, _ := press(m, tui.KeyEnter)
+	_, cmds := press(page, "s")
+	assertCmds(t, "s on the page", cmds, unzoom, shell)
+	_, cmds = press(page, "L")
+	assertCmds(t, "L on the page", cmds, unzoom, lazygit)
+	_, cmds = press(m, "z", "s")
+	assertCmds(t, "s on the rail zoomed with z", cmds, unzoom, shell)
+}
+
 // On the repo page, o, s and L act on the page's repo as they do on the
 // rail, even once a refresh no longer lists it.
 func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
@@ -469,7 +487,7 @@ func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
 	billing := "/work/repos/acme/billing"
 
 	_, cmds := press(m, "s")
-	assertCmds(t, "s", cmds, tui.Split{Rail: railPane, Dir: billing})
+	assertCmds(t, "s", cmds, tui.Zoom{Pane: railPane, Mode: tui.ZoomOff}, tui.Split{Rail: railPane, Dir: billing})
 	_, cmds = press(m, "o")
 	assertCmds(t, "o", cmds, tui.CreateWorkspace{Dir: billing, Label: "billing"})
 	l, cmds := press(m, "L")
@@ -483,5 +501,5 @@ func TestRepoPageOpensItsRepoWithOSAndL(t *testing.T) {
 	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(30 * time.Second)})
 	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{gone}, Refresh: true, Workspaces: session(), WorkspacesRead: true})
 	_, cmds = press(m, "s")
-	assertCmds(t, "s once billing is no longer listed", cmds, tui.Split{Rail: railPane, Dir: billing})
+	assertCmds(t, "s once billing is no longer listed", cmds, tui.Zoom{Pane: railPane, Mode: tui.ZoomOff}, tui.Split{Rail: railPane, Dir: billing})
 }
