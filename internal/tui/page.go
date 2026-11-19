@@ -52,7 +52,7 @@ type page struct {
 	top    int           // index of the first list row in view
 	scroll int           // index of the first detail line in view
 
-	gen     int                   // how many PageLoaded have arrived
+	gen     int                      // how many PageLoaded have arrived
 	details map[repopage.Item]detail // what was read beside each item
 	asked   map[repopage.Item]int    // the gen at which each item's detail was last asked for
 }
