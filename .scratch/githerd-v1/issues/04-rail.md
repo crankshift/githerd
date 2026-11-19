@@ -22,7 +22,7 @@ Notes from the implementation:
 - The action also marks the pane it opens, before the rail process starts. Without that, pressing the key twice quickly would open two rails.
 - A pane can keep the token after Herdr has forgotten it as a plugin pane, as after a live handoff. Then `plugin pane focus` fails. The action tries the next marked pane, and opens a fresh rail when none can be focused.
 - The root and start repo come from the context's `focused_pane_cwd`, falling back to `workspace_cwd`. That is the pane split from, at open time. The start repo is the deepest repo holding that cwd; in a root workspace that is the root's own repo.
-- The rail reads the repos from disk first, which is quick, then runs `herdr.Sync`. When another sync holds the lock, `Sync` doesn't run, so the rail reads from disk again and keeps the stale marks it had.
+- The rail reads the repos from disk first, which is quick, then runs `herdr.Sync`. Stale repos come from `fetch.Last` (ticket 08), so the first view shows them already. When another sync holds the lock, `Sync` doesn't run, and the rail reads from disk again.
 - `f` fetches every repo of the root shown with `Force`, then runs the sync.
 - Extras beyond the ticket: `q` and Ctrl-C quit the rail, and a line above the keys shows the first problem from the last refresh.
 - Left to later tickets: `⧉<workspace>` on rail lines (06); Enter, zoom and the repo page (05). In `internal/tui`, page mode slots in beside `railKey`/`railView`, and Herdr requests become new `Cmd` types.

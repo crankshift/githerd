@@ -46,10 +46,6 @@ type Loaded struct {
 	Roots    []Root   // in roots-file order
 	Problems []string // what went wrong while reading, such as a repo git could not read
 	Refresh  bool     // it answers a Refresh
-	// Synced is set when the refresh ran the sync, which fetched the repos
-	// due. Otherwise fetch failures are unknown, so the stale marks the rail
-	// had are kept.
-	Synced bool
 }
 
 // Root is a configured root and its repos.
@@ -153,11 +149,7 @@ func View(m Model, width, height int) Screen {
 // loaded takes in the state in msg and starts a refresh when it answered
 // the first load.
 func loaded(m Model, msg Loaded) (Model, []Cmd) {
-	roots := msg.Roots
-	if !msg.Synced {
-		roots = keepStale(roots, m.roots)
-	}
-	m.loaded, m.roots, m.problems, m.now = true, roots, msg.Problems, msg.At
+	m.loaded, m.roots, m.problems, m.now = true, msg.Roots, msg.Problems, msg.At
 	m.root = pickRoot(m.roots, m.opts.Cwd)
 	if !m.placed {
 		if r := m.shown(); r != nil && len(r.Repos) > 0 {
@@ -172,30 +164,6 @@ func loaded(m Model, msg Loaded) (Model, []Cmd) {
 		return m.refresh(true)
 	}
 	return m, nil
-}
-
-// keepStale returns a copy of roots in which each repo also stale in prev,
-// found by its Dir, keeps the reason.
-func keepStale(roots, prev []Root) []Root {
-	was := map[string]string{}
-	for _, r := range prev {
-		for _, repo := range r.Repos {
-			if repo.Stale != "" {
-				was[repo.Dir] = repo.Stale
-			}
-		}
-	}
-	out := make([]Root, len(roots))
-	for i, r := range roots {
-		r.Repos = append([]Repo(nil), r.Repos...)
-		for j := range r.Repos {
-			if r.Repos[j].Stale == "" {
-				r.Repos[j].Stale = was[r.Repos[j].Dir]
-			}
-		}
-		out[i] = r
-	}
-	return out
 }
 
 // refresh starts a refresh. A forced one fetches every repo of the root

@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -83,6 +84,34 @@ func TestRailFetchesEveryRepoAtOnceWithF(t *testing.T) {
 	term.typed("f")
 	pos = term.waitFor(pos, "fetching…")
 	term.waitFor(pos, "⇣2")
+
+	term.typed("q")
+	if err := <-exited; err != nil {
+		t.Fatalf("the rail exited with %v", err)
+	}
+}
+
+// The rail's first view, read from disk before the sync ends, already
+// shows a repo whose last fetch failed as stale.
+func TestRailShowsStaleReposBeforeTheSyncEnds(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/api")
+	fetchHead := f.Git(api, "rev-parse", "--path-format=absolute", "--git-path", "FETCH_HEAD")
+	if err := os.WriteFile(fetchHead, nil, 0o644); err != nil { // as a failed fetch leaves it
+		t.Fatal(err)
+	}
+	f.Backdate(api, time.Minute) // within the TTL, so the sync doesn't retry it
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api))
+	release := h.hold()
+	term := newPTY(t, 60, 20)
+
+	exited := h.startRail(term, api)
+	pos := term.waitFor(0, "1 stale")
+	release()
+	h.waitForSync(term, pos)
 
 	term.typed("q")
 	if err := <-exited; err != nil {

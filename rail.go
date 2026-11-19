@@ -154,7 +154,8 @@ func (r *rail) readKeys(ctx context.Context) {
 	}
 }
 
-// load reads the repos under every root from disk, without fetching.
+// load reads the repos under every root from disk, without fetching: their
+// state, and whether their last fetch failed.
 func load(ctx context.Context, env herdr.Env) tui.Loaded {
 	paths, errs := herdr.ReadRoots(env.ConfigDir)
 	l := tui.Loaded{Problems: messages(errs)}
@@ -163,11 +164,17 @@ func load(ctx context.Context, env herdr.Env) tui.Loaded {
 		if err != nil {
 			l.Problems = append(l.Problems, fmt.Sprintf("root %s: %v", path, err))
 		}
+		stale := map[string]error{}
+		for _, o := range fetch.Last(ctx, dirs) {
+			if o.Err != nil {
+				stale[o.Dir] = o.Err
+			}
+		}
 		repos, errs := status.ReadAll(ctx, dirs)
 		l.Problems = append(l.Problems, messages(errs)...)
 		var hr []herdr.Repo
 		for _, repo := range repos {
-			hr = append(hr, herdr.Repo{Repo: repo})
+			hr = append(hr, herdr.Repo{Repo: repo, Stale: stale[repo.Dir]})
 		}
 		l.Roots = append(l.Roots, railRoot(path, hr))
 	}
@@ -192,7 +199,7 @@ func refresh(ctx context.Context, env herdr.Env, force []string) tui.Loaded {
 		l.Refresh = true
 		return l
 	}
-	l := tui.Loaded{Problems: messages(res.Errs), Refresh: true, Synced: true}
+	l := tui.Loaded{Problems: messages(res.Errs), Refresh: true}
 	if err != nil {
 		l.Problems = append(l.Problems, err.Error())
 	}
