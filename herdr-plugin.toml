@@ -1,0 +1,35 @@
+# githerd: which git repos under a root have uncommitted, unpushed or
+# unpulled work, in Herdr's sidebar.
+id = "githerd"
+name = "githerd"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Uncommitted, ahead and behind state of every git repo under a root"
+platforms = ["linux", "macos"]
+
+# Runs at install and update. It needs Go on the PATH of the shell that
+# runs `herdr plugin install`.
+[[build]]
+command = ["go", "build", "-o", "bin/githerd", "."]
+
+# Herdr restores no tokens after a restart, so report them again.
+[[startup]]
+command = ["./bin/githerd", "herdr", "sync"]
+
+# Herdr has no timers: these hooks keep the sidebar tokens current.
+[[events]]
+on = "workspace.created"
+command = ["./bin/githerd", "herdr", "sync"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./bin/githerd", "herdr", "sync"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/githerd", "herdr", "sync"]
+
+# The sync acts only when the agent turned done or idle.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/githerd", "herdr", "sync"]

@@ -306,6 +306,26 @@ func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T)
 	}
 }
 
+func TestSyncFailsOutsideHerdrAndWhenHerdrIsNotRunning(t *testing.T) {
+	f := gitfixture.New(t)
+	f.Clone(f.Remote("api"), "work/repos/acme/api")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+
+	got := githerd(t, f.Env(), f.Path("."), "herdr", "sync")
+	if want := "githerd herdr sync: HERDR_BIN_PATH is not set; run this from Herdr\n"; got.code != 2 || got.stderr != want {
+		t.Errorf("outside Herdr: want exit 2 and stderr %q; got %+v", want, got)
+	}
+
+	got = h.sync() // no snapshot: the fake herdr answers as herdr does with no server
+	if want := "githerd herdr sync: herdr api snapshot: herdr server is not running\n"; got.code != 1 || got.stderr != want {
+		t.Errorf("Herdr not running: want exit 1 and stderr %q; got %+v", want, got)
+	}
+	if reps := reports(t, h.calls()); len(reps) != 0 {
+		t.Errorf("want no reports; got %+v", reps)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.
