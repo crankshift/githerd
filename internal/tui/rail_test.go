@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/crankshift/githerd/internal/status"
 	"github.com/crankshift/githerd/internal/tui"
@@ -150,6 +151,11 @@ func TestRailExplainsHowToConfigureRootsWhenThereAreNone(t *testing.T) {
 	m := railModel(t, "/work/repos/acme/api")
 	assertView(t, m, 30, 14, "rail-no-roots")
 
+	m, _ = tui.Update(m, tui.Loaded{At: t0, Refresh: true, Synced: true, Problems: []string{"roots:2: work: not an absolute path"}})
+	if got, want := tui.View(m, 30, 14)[11].Text(), "⚠ roots:2: work: not an absol…"; got != want {
+		t.Errorf("with a bad roots line, the line above the keys shows %q, want %q", got, want)
+	}
+
 	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(tui.RefreshEvery)})
 	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{work()}, Refresh: true, Synced: true})
 	if got, want := selected(m, 50, 18), "repos/acme/api"+strings.Repeat(" ", 31)+"●3 ⇡2"; got != want {
@@ -253,6 +259,71 @@ func TestRailForcesAFetchWithF(t *testing.T) {
 	assertCmds(t, "f before the first load", cmds)
 	_, cmds = tui.Update(m, tui.Loaded{At: t0, Roots: []tui.Root{work(), projects}})
 	assertCmds(t, "after the first load", cmds, tui.Refresh{Force: dirs(projects)})
+}
+
+// A refresh redraws the rail with the new state. The cursor stays on its
+// repo when the repo moves to the other group. When the refresh could not
+// run the sync, as when another sync held the lock, fetch failures are
+// unknown, so the rail keeps the stale marks it had until a sync clears
+// them. What went wrong shows above the keys until a refresh goes well.
+func TestRailRedrawsAfterARefreshAndKeepsTheCursorOnItsRepo(t *testing.T) {
+	m := railModel(t, "/work/repos/acme/api", work())
+
+	after := work()
+	after.Repos[1].Uncommitted, after.Repos[1].Ahead = 0, 0 // api is committed and pushed
+	after.Repos[5].Stale = ""                               // web: not known without a sync
+	after.Repos = append(after.Repos[:9], repo("/work/sandbox/scratch", status.Repo{Branch: "main", Uncommitted: 1}))
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(30 * time.Second)})
+	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(31 * time.Second), Roots: []tui.Root{after}, Refresh: true,
+		Problems: []string{"herdr api snapshot: timed out after 10s", "/work/sandbox/old: git status: not a git repository"}})
+	assertView(t, m, 50, 18, "rail-refreshed")
+
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(61 * time.Second)})
+	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(62 * time.Second), Roots: []tui.Root{after}, Refresh: true, Synced: true})
+	view := tui.View(m, 50, 18)
+	if got, want := view[0].Text(), "6/10 need attention"+strings.Repeat(" ", 26)+"↻ 30s"; got != want {
+		t.Errorf("after a sync found no stale repo, the header shows %q, want %q", got, want)
+	}
+	if got, want := view[len(view)-3].Text(), strings.Repeat(" ", 50); got != want {
+		t.Errorf("after a refresh that went well, the line above the keys shows %q, want it blank", got)
+	}
+}
+
+// q or Ctrl-C closes the rail. While a filter is typed, q is a letter of it.
+func TestRailQuitsWithQOrCtrlC(t *testing.T) {
+	m := railModel(t, "/work", work())
+
+	_, cmds := press(m, "q")
+	assertCmds(t, "q", cmds, tui.Quit{})
+	_, cmds = press(m, tui.KeyCtrlC)
+	assertCmds(t, "Ctrl-C", cmds, tui.Quit{})
+	m, cmds = press(m, "/", "q")
+	assertCmds(t, "q in the filter", cmds)
+	_, cmds = press(m, tui.KeyCtrlC)
+	assertCmds(t, "Ctrl-C in the filter", cmds, tui.Quit{})
+}
+
+// View fills exactly width × height at any size, a tiny pane included.
+func TestRailViewFillsItsSizeExactly(t *testing.T) {
+	m := railModel(t, "/work", work())
+	m, _ = tui.Update(m, tui.Loaded{At: t0, Roots: []tui.Root{work()}, Refresh: true, Problems: []string{"a problem"}})
+	noRoots := railModel(t, "/work")
+	loading, _ := tui.New(tui.Options{Now: t0})
+	for name, m := range map[string]tui.Model{"rail": m, "no roots": noRoots, "loading": loading} {
+		for w := 0; w <= 12; w++ {
+			for h := 0; h <= 8; h++ {
+				screen := tui.View(m, w, h)
+				if len(screen) != h {
+					t.Fatalf("%s at %d×%d: %d lines", name, w, h, len(screen))
+				}
+				for i, l := range screen {
+					if got := utf8.RuneCountInString(l.Text()); got != w {
+						t.Fatalf("%s at %d×%d: line %d is %d wide: %q", name, w, h, i, got, l.Text())
+					}
+				}
+			}
+		}
+	}
 }
 
 // selected returns the text of the selected line of the view, without the

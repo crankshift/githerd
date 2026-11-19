@@ -1,0 +1,18 @@
+│6/10 need attention · 1 stale                ↻ 30s│
+│~/work                                            │
+│──────────────────────────────────────────────────│
+│repos/acme/billing                              ⇡2│
+│repos/acme/mobile                            ⇡1 ⇣2│
+│repos/acme/web                                ⇣4 ⚠│
+│repos/tools/cli                               ∅ ⇡3│
+│sandbox/experiments                           ∅ ⇡2│
+│sandbox/scratch                               ●1 ∅│
+│. (root)                                         ✓│ dim
+│repos/acme/api                                   ✓│ selected dim
+│repos/acme/docs                                  ✓│ dim
+│repos/tools/lint-rules                           ⌀│ dim
+│                                                  │
+│                                                  │
+│⚠ herdr api snapshot: timed out after 10s  +1 more│
+│──────────────────────────────────────────────────│
+│/ filter  f fetch  q quit                         │

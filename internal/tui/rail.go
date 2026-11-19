@@ -24,6 +24,8 @@ func railKey(m Model, k Key) (Model, []Cmd) {
 		m.filter = ""
 	case "f":
 		return m.forceFetch()
+	case "q":
+		return m, []Cmd{Quit{}}
 	}
 	return m, nil
 }
@@ -76,11 +78,18 @@ func (m Model) move(n int) Model {
 	return m
 }
 
-// Rows of the rail around its list.
-const (
-	railHeader = 3 // counts, root or filter, rule
-	railFooter = 2 // rule, keys
-)
+// railHeader is how many rows the rail's header takes: counts, root or
+// filter, rule.
+const railHeader = 3
+
+// footerRows is how many rows the rail's footer takes: what went wrong, if
+// anything did, a rule and the keys.
+func (m Model) footerRows() int {
+	if len(m.problems) > 0 {
+		return 3
+	}
+	return 2
+}
 
 // settle moves the cursor to the first line when its repo is not listed,
 // as when the filter hides it, and scrolls the list as little as keeps the
@@ -90,7 +99,7 @@ func (m Model) settle() Model {
 	if len(lines) > 0 && !slices.ContainsFunc(lines, func(l line) bool { return l.repo.Dir == m.selected }) {
 		m.selected = lines[0].repo.Dir
 	}
-	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-railFooter)
+	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-m.footerRows())
 	return m
 }
 
@@ -154,10 +163,13 @@ func railView(m Model, w, h int) Screen {
 	}
 	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
 	footer := Screen{rule(w), keys(w, "/", "filter", "f", "fetch", "q", "quit")}
+	if len(m.problems) > 0 {
+		footer = append(Screen{m.problemLine(w)}, footer...)
+	}
 
 	lines := m.lines()
 	cur := m.cursor(lines)
-	body := max(h-railHeader-railFooter, 0)
+	body := max(h-railHeader-len(footer), 0)
 	top := scroll(m.top, cur, len(lines), body)
 	for i := top; i < len(lines) && i < top+body; i++ {
 		screen = append(screen, repoLine(lines[i], i == cur, w))
@@ -172,6 +184,16 @@ func railView(m Model, w, h int) Screen {
 	return screen[:min(len(screen), h)]
 }
 
+// problemLine names the first thing that went wrong in the last load or
+// refresh, and how many more did.
+func (m Model) problemLine(w int) Line {
+	var more []Span
+	if n := len(m.problems) - 1; n > 0 {
+		more = []Span{{Text: fmt.Sprintf("+%d more", n), Style: Style{Dim: true}}}
+	}
+	return Line{Spans: leftRight([]Span{{Text: "⚠ " + m.problems[0], Style: Style{Color: Red}}}, more, w)}
+}
+
 // noRootsView tells where to list the roots when there are none.
 func noRootsView(m Model, w, h int) Screen {
 	screen := Screen{{Spans: fit([]Span{{Text: "No roots configured.", Style: Style{Color: Yellow, Bold: true}}}, w)}, blank(w)}
@@ -183,6 +205,9 @@ func noRootsView(m Model, w, h int) Screen {
 		screen = append(screen, Line{Spans: fit([]Span{{Text: text}}, w)})
 	}
 	footer := Screen{rule(w), keys(w, "q", "quit")}
+	if len(m.problems) > 0 {
+		footer = append(Screen{m.problemLine(w)}, footer...)
+	}
 	for len(screen) < h-len(footer) {
 		screen = append(screen, blank(w))
 	}
