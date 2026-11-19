@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 )
 
 // The plugin and pane that run the rail, as the manifest declares them.
@@ -95,4 +96,28 @@ func OpenRail(ctx context.Context, env Env) error {
 func MarkRail(ctx context.Context, env Env, pane string) error {
 	_, err := cli{bin: env.Bin}.run(ctx, "pane", "report-metadata", pane, "--source", Source, "--token", railToken+"="+railValue)
 	return err
+}
+
+// RootsFile returns the path of the roots file in the plugin config dir.
+func RootsFile(configDir string) string { return filepath.Join(configDir, rootsFile) }
+
+// ReadRoots returns the roots that the roots file in the plugin config dir
+// lists, as Sync reads them, and the problems with its lines.
+func ReadRoots(configDir string) ([]string, []error) { return readRoots(RootsFile(configDir)) }
+
+// OpenedFrom returns the cwd of the pane a plugin pane was opened from, read
+// from HERDR_PLUGIN_CONTEXT_JSON: for a split, the pane it split, as it was
+// at open time. It returns "" when the context doesn't say.
+func OpenedFrom(contextJSON string) string {
+	var c struct {
+		FocusedPaneCwd string `json:"focused_pane_cwd"`
+		WorkspaceCwd   string `json:"workspace_cwd"`
+	}
+	if json.Unmarshal([]byte(contextJSON), &c) != nil {
+		return ""
+	}
+	if c.FocusedPaneCwd != "" {
+		return c.FocusedPaneCwd
+	}
+	return c.WorkspaceCwd
 }

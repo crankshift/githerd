@@ -20,6 +20,12 @@ Commands:
   herdr sync
       from a Herdr hook: refresh the repos under the roots listed in
       $HERDR_PLUGIN_CONFIG_DIR/roots and report them to Herdr's sidebar
+  herdr rail
+      Herdr's rail action: focus the rail of the current workspace, or open
+      it beside the focused pane
+  rail
+      the rail, in the pane Herdr opens for it: every repo under the root,
+      refreshed every 30 seconds
 `
 
 func main() {
@@ -39,6 +45,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runStatus(ctx, args[1:], stdout, stderr)
 	case "herdr":
 		return runHerdr(ctx, args[1:], stdout, stderr)
+	case "rail":
+		return runRail(ctx, args[1:], stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
