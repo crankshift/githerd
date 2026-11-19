@@ -29,11 +29,12 @@ const (
 	fakeSnapshotFile = "snapshot.json" // the snapshot `api snapshot` serves; without it, herdr is not running
 	fakeCallsFile    = "calls.jsonl"   // one JSON array of argv per call
 	fakeHoldFile     = "hold"          // while it exists, `api snapshot` waits
+	fakeClosedFile   = "closed"        // ids of workspaces closed since the snapshot, one per line
 )
 
 // runFakeHerdr is the fake herdr. It records its argv, serves the canned
 // snapshot, and accepts every workspace report-metadata call silently, as
-// herdr does on success.
+// herdr does on success, unless the workspace was closed.
 func runFakeHerdr(dir string, args []string) int {
 	line, _ := json.Marshal(args)
 	calls, err := os.OpenFile(filepath.Join(dir, fakeCallsFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -65,6 +66,13 @@ func runFakeHerdr(dir string, args []string) int {
 		fmt.Printf(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":%s}}`+"\n", bytes.TrimSpace(snap))
 		return 0
 	case len(args) > 2 && args[0] == "workspace" && args[1] == "report-metadata":
+		closed, _ := os.ReadFile(filepath.Join(dir, fakeClosedFile))
+		for _, id := range strings.Fields(string(closed)) {
+			if id == args[2] {
+				fmt.Fprintf(os.Stderr, `{"id":"cli:request","error":{"code":"workspace_not_found","message":"workspace %s not found"}}`+"\n", id)
+				return 1
+			}
+		}
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "fake herdr: unexpected command %q\n", args)

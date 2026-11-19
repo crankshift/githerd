@@ -135,18 +135,19 @@ func worthSyncing(eventJSON string) bool {
 	return event.Data.AgentStatus == "done" || event.Data.AgentStatus == "idle"
 }
 
-// syncOnce runs one sync.
+// syncOnce runs one sync. The snapshot comes after the fetches, which can
+// take a while, so the workspaces it reports to are as fresh as can be.
 func syncOnce(ctx context.Context, env Env) (Result, error) {
 	var res Result
 	paths, errs := readRoots(filepath.Join(env.ConfigDir, rootsFile))
+	res.Errs = append(res.Errs, errs...)
+	res.Roots, errs = scan(ctx, paths)
 	res.Errs = append(res.Errs, errs...)
 	herdr := cli{bin: env.Bin}
 	snap, err := herdr.snapshot(ctx)
 	if err != nil {
 		return res, err
 	}
-	res.Roots, errs = scan(ctx, paths)
-	res.Errs = append(res.Errs, errs...)
 
 	seq, err := nextSeq(env.StateDir)
 	if err != nil {
@@ -245,9 +246,9 @@ func canonical(path string) string {
 
 // locate returns the root that contains cwd, the deepest one when roots
 // nest, and the deepest repo under it, other than the root itself, that
-// contains cwd. Either is nil when nothing contains cwd.
+// contains cwd. Either is nil when nothing contains cwd, or cwd is unknown.
 func locate(roots []Root, cwd string) (*Root, *Repo) {
-	if cwd == "" {
+	if !filepath.IsAbs(cwd) {
 		return nil, nil
 	}
 	cwd = canonical(cwd)

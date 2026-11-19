@@ -15,6 +15,7 @@ import (
 // A mapped workspace gets its repo's uncommitted count; the root's summary
 // and the stale mark don't apply to it, so they are cleared.
 func TestSyncReportsUncommittedChangesToAMappedWorkspace(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	f.Write(api, "README.md", "# api, edited\n")
@@ -32,6 +33,7 @@ func TestSyncReportsUncommittedChangesToAMappedWorkspace(t *testing.T) {
 // workspace, and gets the root's summary: how many repos need attention, of
 // how many, or a check mark when none does.
 func TestSyncReportsTheRootSummaryToRootWorkspaces(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	work := f.EveryState() // 6 of its 10 repos need attention
 	f.Clone(f.Remote("site"), "projects/site")
@@ -55,6 +57,7 @@ func TestSyncReportsTheRootSummaryToRootWorkspaces(t *testing.T) {
 // lines and # comments are ignored. Each workspace gets the root that
 // contains it.
 func TestSyncReadsTheRootsFile(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	site := f.Clone(f.Remote("site"), "home/projects/site")
 	f.Write(site, "index.html", "<h1>hi</h1>\n")
@@ -85,6 +88,7 @@ func TestSyncReadsTheRootsFile(t *testing.T) {
 // Hooks run in the plugin root, which moves on every update, so a relative
 // root would mean nothing: it is named on stderr and the others still sync.
 func TestSyncRejectsARelativeRoot(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	h := newFakeHerdr(t, f)
@@ -104,6 +108,7 @@ func TestSyncRejectsARelativeRoot(t *testing.T) {
 // A root or a pane cwd reached through a symlink still matches: Herdr may
 // report a cwd as the shell spelled it or as the OS resolved it.
 func TestSyncMatchesPathsThroughSymlinks(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	f.Write(api, "notes.txt", "todo\n")
@@ -123,12 +128,14 @@ func TestSyncMatchesPathsThroughSymlinks(t *testing.T) {
 
 // With no roots configured, a fresh session gets nothing reported.
 func TestSyncReportsNothingWithoutRoots(t *testing.T) {
+	t.Parallel()
 	for name, roots := range map[string]*string{
 		"no roots file":    nil,
 		"only comments":    ptr("# ~/work\n\n   \n"),
 		"empty roots file": ptr(""),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := gitfixture.New(t)
 			api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 			f.Write(api, "notes.txt", "todo\n")
@@ -151,11 +158,13 @@ func TestSyncReportsNothingWithoutRoots(t *testing.T) {
 // cleared. Other workspaces outside are left alone, and so are other
 // sources' tokens.
 func TestSyncClearsItsTokensFromWorkspacesOutsideEveryRoot(t *testing.T) {
+	t.Parallel()
 	for name, roots := range map[string]string{
 		"root configured": "work\n",
 		"no roots left":   "",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := gitfixture.New(t)
 			f.Clone(f.Remote("api"), "work/repos/acme/api")
 			elsewhere := f.Path("elsewhere")
@@ -183,6 +192,7 @@ func TestSyncClearsItsTokensFromWorkspacesOutsideEveryRoot(t *testing.T) {
 // same source, so each sync's --seq is the Unix time in milliseconds, or the
 // previous sync's plus one when the clock is behind it.
 func TestSyncSequencesEachSyncAfterTheLast(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	web := f.Clone(f.Remote("web"), "work/repos/acme/web")
@@ -224,6 +234,7 @@ func TestSyncSequencesEachSyncAfterTheLast(t *testing.T) {
 // An agent turning done or idle may have left changes behind, so sync runs;
 // any other agent status leaves Herdr alone. Other hooks always sync.
 func TestSyncOnAnAgentStatusChangeRunsOnlyWhenTheAgentIsDoneOrIdle(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	h := newFakeHerdr(t, f)
@@ -263,6 +274,7 @@ func TestSyncOnAnAgentStatusChangeRunsOnlyWhenTheAgentIsDoneOrIdle(t *testing.T)
 // and exits at once; the running sync then runs once more, so a burst costs
 // two syncs and its last trigger is not lost.
 func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	h := newFakeHerdr(t, f)
@@ -307,6 +319,7 @@ func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T)
 }
 
 func TestSyncFailsOutsideHerdrAndWhenHerdrIsNotRunning(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("api"), "work/repos/acme/api")
 	h := newFakeHerdr(t, f)
@@ -326,10 +339,33 @@ func TestSyncFailsOutsideHerdrAndWhenHerdrIsNotRunning(t *testing.T) {
 	}
 }
 
+// A report Herdr refuses, say for a workspace closed since the snapshot, is
+// named on stderr, and the other workspaces still get theirs.
+func TestSyncReportsEveryOtherWorkspaceWhenHerdrRefusesOne(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api), at("w2", api), at("w3", api))
+	writeFile(t, filepath.Join(h.dir, fakeClosedFile), "w2\n")
+
+	got := h.sync()
+
+	want := "githerd herdr sync: herdr workspace report-metadata: workspace w2 not found\n"
+	if got.code != 1 || got.stderr != want {
+		t.Errorf("want exit 1 and stderr %q; got %+v", want, got)
+	}
+	if reps := reports(t, h.calls()); len(reps) != 3 || reps[2].workspace != "w3" {
+		t.Errorf("want a report for each workspace, w3 last; got %+v", reps)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.
 func TestSyncFetchesWithTheTTLAndFlagsStaleRepos(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	docsRemote := f.Remote("docs")
 	docs := f.Clone(docsRemote, "work/repos/acme/docs")
@@ -357,6 +393,7 @@ func TestSyncFetchesWithTheTTLAndFlagsStaleRepos(t *testing.T) {
 // tab. The focused pane, other tabs, and the cwd an agent moved its own
 // process to don't move the workspace.
 func TestSyncMapsAWorkspaceThroughTheFirstPaneOfItsFirstTab(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
 	f.Write(api, "notes.txt", "todo\n")
@@ -386,6 +423,7 @@ func TestSyncMapsAWorkspaceThroughTheFirstPaneOfItsFirstTab(t *testing.T) {
 // such repo, and gets its uncommitted count, with ∅ when it has no upstream.
 // Ahead and behind are Herdr's own git_status, so they don't show here.
 func TestSyncReportsEachMappedWorkspaceItsReposChanges(t *testing.T) {
+	t.Parallel()
 	f := gitfixture.New(t)
 	work := f.EveryState()
 	f.Write(filepath.Join(work, gitfixture.NoUpstreamRepo), "scratch.txt", "notes\n")
