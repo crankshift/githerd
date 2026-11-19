@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crankshift/githerd/internal/discovery"
+	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -25,6 +26,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print JSON instead of a table")
 	depth := fs.Int("depth", discovery.DefaultDepth, "directory levels below the root to scan")
+	doFetch := fs.Bool("fetch", false, "fetch each repo's upstream remote before reporting")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return 2
@@ -51,6 +53,9 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if err != nil {
 		fmt.Fprintln(stderr, "githerd:", err)
 		return 1
+	}
+	if *doFetch {
+		fetch.Run(ctx, dirs, fetch.Options{})
 	}
 	repos, errs := readAll(ctx, dirs)
 	for _, err := range errs {
