@@ -21,7 +21,7 @@ Judgement calls (smells). Fix the ones where the copies behave differently; fix 
 - [x] S8. Repeated switches: entry kind in rows and detail lines; Remote/Gone/no-upstream in tracking and detail lines; the "exactly one field set" item switched again in Show.
 - [x] S9. Names: `fetch.one` vs `fetchOne`; `detail.d`; `gitLines(…, differ bool)` (means "exit 1 is OK"); `hr`.
 - [x] S10. Primitive obsession: the adapter's `Zoom(mode string)` while the TUI has a zoom-mode type. Give the adapter a typed mode (the adapter must not import the TUI).
-- [ ] S11. Divergent change: `internal/herdr/rail.go` also holds the roots file and the opened-from context; split them out. The TUI page file (≈700 lines) mixes messages, state, keys and rendering; split by concern.
+- [x] S11. Divergent change: `internal/herdr/rail.go` also holds the roots file and the opened-from context; split them out. The TUI page file (≈700 lines) mixes messages, state, keys and rendering; split by concern.
 - [x] S12. Exported but package-local: `herdr.Source`, `status.FetchedAt`. Unexport.
 
 ## Spec

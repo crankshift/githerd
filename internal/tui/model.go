@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crankshift/githerd/internal/paths"
+	"github.com/crankshift/githerd/internal/repopage"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -143,6 +144,32 @@ func (CreateWorkspace) cmd() {}
 func (Split) cmd()           {}
 func (Zoom) cmd()            {}
 func (LoadPage) cmd()        {}
+
+// PageLoaded is what the repo page of the repo in Dir lists, or why it
+// could not be read. It answers a LoadPage.
+type PageLoaded struct {
+	Dir  string
+	Page repopage.Page
+	Err  string
+}
+
+// LoadDetail asks for what the repo page of the repo in Dir shows beside
+// Item: a diff, or a branch's recent commits. The answer is a DetailLoaded.
+type LoadDetail struct {
+	Dir  string
+	Item repopage.Item
+}
+
+// DetailLoaded is what the repo page shows beside Item, or why it could not
+// be read. It answers a LoadDetail.
+type DetailLoaded struct {
+	Dir    string
+	Item   repopage.Item
+	Detail repopage.Detail
+	Err    string
+}
+
+func (LoadDetail) cmd() {}
 
 // Options are what the rail knows when it opens.
 type Options struct {
