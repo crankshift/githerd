@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -54,6 +55,9 @@ func EnvFrom(getenv func(string) string) (Env, error) {
 
 // Result is what a sync found and reported.
 type Result struct {
+	// Ran is false when the sync did not run: the event called for none,
+	// or another sync was running and runs once more in its place.
+	Ran        bool
 	Roots      []Root      // the configured roots, in roots-file order
 	Workspaces []Workspace // every workspace of the session, in sidebar order
 	// Errs are the problems that did not stop the sync, such as a repo
@@ -86,11 +90,30 @@ type Workspace struct {
 // Sync reports the state of every repo under the configured roots to the
 // workspaces of the Herdr session. For an agent status change it does
 // nothing unless the agent turned done or idle.
+//
+// Hooks fire in bursts, so one sync runs at a time, under a lock in the
+// state dir. A sync that finds the lock held leaves a mark and returns at
+// once; the running sync finds the mark when it finishes and runs once more,
+// so a burst costs two syncs and its last trigger is not lost.
 func Sync(ctx context.Context, env Env) (Result, error) {
 	if !worthSyncing(env.Event) {
 		return Result{}, nil
 	}
-	return syncOnce(ctx, env)
+	if err := os.MkdirAll(env.StateDir, 0o755); err != nil {
+		return Result{}, err
+	}
+	for {
+		l, err := lock(env.StateDir)
+		if err != nil || l == nil {
+			return Result{}, err
+		}
+		res, err := syncOnce(ctx, env)
+		res.Ran = true
+		rerun := l.unlock()
+		if err != nil || !rerun {
+			return res, err
+		}
+	}
 }
 
 // worthSyncing reports whether the hook event in eventJSON can have changed

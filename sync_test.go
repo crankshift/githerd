@@ -259,6 +259,53 @@ func TestSyncOnAnAgentStatusChangeRunsOnlyWhenTheAgentIsDoneOrIdle(t *testing.T)
 	}
 }
 
+// Hooks fire in bursts. A sync that finds another one running leaves a mark
+// and exits at once; the running sync then runs once more, so a burst costs
+// two syncs and its last trigger is not lost.
+func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("api", api))
+	snapshot := []string{"api", "snapshot"}
+
+	release := h.hold()
+	wait := h.startSync()
+	h.waitForCalls(1) // the first sync is running, waiting on its snapshot
+
+	f.Write(api, "notes.txt", "todo\n") // what the burst is about
+	for i := 0; i < 2; i++ {
+		start := time.Now()
+		got := h.sync("HERDR_PLUGIN_EVENT=workspace.focused")
+		if got.code != 0 || got.stdout != "" || got.stderr != "" || time.Since(start) > 5*time.Second {
+			t.Errorf("sync during another: want exit 0 at once with no output; got %+v after %v", got, time.Since(start))
+		}
+	}
+	if calls := h.peekCalls(); len(calls) != 1 {
+		t.Errorf("syncs during another called herdr: %q", calls)
+	}
+	release()
+
+	if got := wait(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("running sync: want exit 0 and no output; got %+v", got)
+	}
+	calls := h.calls()
+	reps := reports(t, calls)
+	if len(calls) != 4 || !reflect.DeepEqual(calls[0], snapshot) || !reflect.DeepEqual(calls[2], snapshot) || len(reps) != 2 {
+		t.Fatalf("want two syncs, each a snapshot and a report; got %q", calls)
+	}
+	if reps[1].seq <= reps[0].seq || reps[1].tokens["changes"] != "●1" {
+		t.Errorf("want the rerun to report the change, sequenced after the first; got %+v", reps)
+	}
+
+	// The mark is spent: the next sync runs once.
+	h.sync()
+	if calls := h.calls(); len(calls) != 2 {
+		t.Errorf("want one snapshot and one report; got %q", calls)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.

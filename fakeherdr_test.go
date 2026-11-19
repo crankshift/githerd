@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -128,19 +129,75 @@ func (h *fakeHerdr) sync(extra ...string) result {
 	return githerd(h.t, append(h.env(), extra...), h.f.Path("."), "herdr", "sync")
 }
 
+// startSync starts githerd herdr sync as a Herdr hook would, without
+// waiting for it. wait waits for it to exit and returns what it produced.
+func (h *fakeHerdr) startSync(extra ...string) (wait func() result) {
+	h.t.Helper()
+	cmd := exec.Command(githerdBin, "herdr", "sync")
+	cmd.Dir = h.f.Path(".")
+	cmd.Env = append(append(h.env(), extra...), "PWD="+cmd.Dir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		h.t.Fatal(err)
+	}
+	return func() result {
+		h.t.Helper()
+		err := cmd.Wait()
+		var exit *exec.ExitError
+		if err != nil && !errors.As(err, &exit) {
+			h.t.Fatalf("running githerd: %v", err)
+		}
+		return result{stdout: stdout.String(), stderr: stderr.String(), code: cmd.ProcessState.ExitCode()}
+	}
+}
+
+// hold makes `api snapshot` wait until release is called, so a sync can be
+// caught while it runs.
+func (h *fakeHerdr) hold() (release func()) {
+	h.t.Helper()
+	path := filepath.Join(h.dir, fakeHoldFile)
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+	return func() {
+		h.t.Helper()
+		if err := os.Remove(path); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+}
+
+// waitForCalls waits until n herdr calls were made since the last calls,
+// and fails the test if that takes over 10 seconds.
+func (h *fakeHerdr) waitForCalls(n int) {
+	h.t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); len(h.peekCalls()) < n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("waited 10s for %d herdr calls; got %q", n, h.peekCalls())
+		}
+	}
+}
+
 // calls returns the argv of every herdr call made since the last calls, and
 // forgets them.
 func (h *fakeHerdr) calls() [][]string {
 	h.t.Helper()
-	path := filepath.Join(h.dir, fakeCallsFile)
-	b, err := os.ReadFile(path)
+	calls := h.peekCalls()
+	if err := os.Remove(filepath.Join(h.dir, fakeCallsFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		h.t.Fatal(err)
+	}
+	return calls
+}
+
+// peekCalls returns the argv of every herdr call made since the last calls.
+func (h *fakeHerdr) peekCalls() [][]string {
+	h.t.Helper()
+	b, err := os.ReadFile(filepath.Join(h.dir, fakeCallsFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		h.t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
 		h.t.Fatal(err)
 	}
 	var calls [][]string
