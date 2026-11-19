@@ -100,8 +100,63 @@ func TestStatusFetchSkipsReposWithNoUpstreamRemote(t *testing.T) {
 	assertField(t, "stale", field(t, got, "stale"), nothingFetched)
 }
 
-// A failed fetch empties FETCH_HEAD, so a stale repo is fetched again on the
-// next run whatever the TTL, and stays stale until a fetch succeeds.
+// A stale repo stays stale until a fetch of it works, and is fetched again
+// only once the TTL has passed since its fetch failed, or with --force. When
+// it isn't fetched, the reason it failed is no longer known.
+func TestStatusFetchRetriesAStaleRepoOnlyAfterTheTTLOrWithForce(t *testing.T) {
+	f := gitfixture.New(t)
+	f.FakeSSH() // every host refuses the connection
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@git.example.com/acme/api.git")
+	refused := jsonString(t, "ssh: connect to host port 22: Connection refused")
+	lastFailed := jsonString(t, "last fetch failed")
+	fetches := 0
+	assertFetch := func(fetched bool, stale string, args ...string) {
+		t.Helper()
+		got := githerd(t, f.Env(), f.Path("work"), append([]string{"status", "--json", "--fetch"}, args...)...)
+		assertField(t, "stale", field(t, got, "stale"), map[string]string{"repos/acme/api": stale})
+		if fetched {
+			fetches++
+		}
+		if calls := len(f.SSHCalls()); calls != fetches {
+			t.Errorf("status --fetch %v: fetched %d times in all, want %d", args, calls, fetches)
+		}
+	}
+
+	assertFetch(true, refused)
+	assertFetch(false, lastFailed)
+	assertFetch(false, lastFailed, "--ttl", "1h")
+	f.Backdate(api, 14*time.Minute)
+	assertFetch(false, lastFailed)
+	assertFetch(true, refused, "--force")
+	f.Backdate(api, 16*time.Minute)
+	assertFetch(true, refused)
+	f.Backdate(api, 3*time.Minute)
+	assertFetch(true, refused, "--ttl", "2m")
+}
+
+// A failed fetch leaves FETCH_HEAD empty with the time it failed as its
+// mtime, so the TTL counts from the failure, even for a fetch that hung
+// until it timed out.
+func TestStatusFetchCountsTheTTLFromWhenAFetchTimedOut(t *testing.T) {
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	args := []string{"status", "--json", "--fetch", "--fetch-timeout", "1s", "--ttl", "800ms"}
+
+	got := githerd(t, f.Env(), f.Path("work"), args...)
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{"repos/acme/api": jsonString(t, "timed out after 1s")})
+
+	got = githerd(t, f.Env(), f.Path("work"), args...)
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{"repos/acme/api": jsonString(t, "last fetch failed")})
+	if calls := f.SSHCalls(); len(calls) != 1 {
+		t.Errorf("want one fetch, the one that timed out less than the TTL ago; got ssh calls %q", calls)
+	}
+}
+
+// A failed fetch marks the repo stale with git's reason, and the table
+// notes it.
 func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
 	f := gitfixture.New(t)
 	webRemote := f.Remote("web")
@@ -124,7 +179,7 @@ func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
 		t.Errorf("stderr mismatch\n--- got ---\n%s\n--- want ---\n%s", got.stderr, want)
 	}
 
-	got = githerd(t, f.Env(), root, "status", "--json", "--fetch")
+	got = githerd(t, f.Env(), root, "status", "--json", "--fetch", "--force")
 
 	assertField(t, "stale", field(t, got, "stale"), map[string]string{
 		"repos/acme/docs": "null",
@@ -135,7 +190,7 @@ func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
 	}
 
 	rename(t, moved, webRemote)
-	got = githerd(t, f.Env(), root, "status", "--json", "--fetch")
+	got = githerd(t, f.Env(), root, "status", "--json", "--fetch", "--force")
 
 	assertField(t, "stale", field(t, got, "stale"), map[string]string{
 		"repos/acme/docs": "null", "repos/acme/web": "null",

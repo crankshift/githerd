@@ -15,8 +15,8 @@ const usage = `usage: githerd <command> [arguments]
 Commands:
   status [root] [--json] [--depth N] [--fetch [--ttl D] [--force] [--fetch-timeout D]]
       print the state of every repo under root (default: .); with --fetch,
-      fetch each repo's upstream remote first, skipping repos fetched within
-      the TTL (default 15m) unless --force is given
+      fetch each repo's upstream remote first, skipping repos fetched, or
+      whose fetch failed, within the TTL (default 15m) unless --force is given
   herdr sync
       from a Herdr hook: refresh the repos under the roots listed in
       $HERDR_PLUGIN_CONFIG_DIR/roots and report them to Herdr's sidebar

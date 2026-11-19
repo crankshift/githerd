@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,7 @@ type Root struct {
 // Repo is the state of one repo under a root.
 type Repo struct {
 	status.Repo
-	Stale error  // why its fetch failed, so behind may be out of date; nil when it didn't fail
+	Stale error  // why its last fetch failed, so behind may be out of date; nil when it didn't fail
 	canon string // Dir with symlinks resolved
 }
 
@@ -90,6 +91,10 @@ type Workspace struct {
 // Sync reports the state of every repo under the configured roots to the
 // workspaces of the Herdr session. For an agent status change it does
 // nothing unless the agent turned done or idle.
+//
+// It reports what the repos hold locally first, then fetches the repos due
+// for it with the 15-minute TTL, and reports again to the workspaces whose
+// tokens that changed. The Result holds the state after the fetches.
 //
 // Hooks fire in bursts, so one sync runs at a time, under a lock in the
 // state dir. A sync that finds the lock held leaves a mark and returns at
@@ -135,13 +140,16 @@ func worthSyncing(eventJSON string) bool {
 	return event.Data.AgentStatus == "done" || event.Data.AgentStatus == "idle"
 }
 
-// syncOnce runs one sync. The snapshot comes after the fetches, which can
-// take a while, so the workspaces it reports to are as fresh as can be.
+// syncOnce runs one sync in two rounds of reports. The first reports what
+// the repos hold locally, so a slow or hanging remote can't hold up the
+// sidebar. Then the repos due for a fetch are fetched, and the second round
+// reports again to the workspaces whose tokens that changed.
 func syncOnce(ctx context.Context, env Env) (Result, error) {
 	var res Result
 	paths, errs := readRoots(filepath.Join(env.ConfigDir, rootsFile))
 	res.Errs = append(res.Errs, errs...)
-	res.Roots, errs = scan(ctx, paths)
+	var dirs []string
+	res.Roots, dirs, errs = scan(ctx, paths)
 	res.Errs = append(res.Errs, errs...)
 	herdr := cli{bin: env.Bin}
 	snap, err := herdr.snapshot(ctx)
@@ -149,39 +157,116 @@ func syncOnce(ctx context.Context, env Env) (Result, error) {
 		return res, err
 	}
 
-	seq, err := nextSeq(env.StateDir)
+	var targets []target
+	for _, sw := range snap.Workspaces {
+		w := Workspace{ID: sw.ID, Label: sw.Label}
+		t := target{id: sw.ID}
+		t.root, t.repo = locate(res.Roots, snap.firstPaneCwd(sw.ID))
+		if t.root != nil {
+			w.Root = t.root.Path
+		}
+		if t.repo != nil {
+			w.Repo = t.repo.Dir
+		}
+		res.Workspaces = append(res.Workspaces, w)
+		// Outside every root, a workspace gets a report only to clear what
+		// githerd reported to it earlier.
+		if t.root != nil || hasAny(sw.Tokens, tokenNames) {
+			targets = append(targets, t)
+		}
+	}
+
+	sent, errs, err := reportRound(ctx, herdr, env.StateDir, targets, nil)
+	res.Errs = append(res.Errs, errs...)
 	if err != nil {
 		return res, err
 	}
-	for _, sw := range snap.Workspaces {
-		w := Workspace{ID: sw.ID, Label: sw.Label}
-		root, repo := locate(res.Roots, snap.firstPaneCwd(sw.ID))
-		var toks map[string]string
-		switch {
-		case repo != nil:
-			w.Root, w.Repo = root.Path, repo.Dir
-			toks = repoTokens(*repo)
-		case root != nil:
-			w.Root = root.Path
-			toks = rootTokens(*root)
-		case hasAny(sw.Tokens, tokenNames):
-			toks = map[string]string{} // outside every root now: clear what githerd reported
-		}
-		res.Workspaces = append(res.Workspaces, w)
-		if toks == nil {
-			continue
-		}
-		if err := herdr.report(ctx, w.ID, seq, toks); err != nil {
-			res.Errs = append(res.Errs, err)
-		}
-	}
-	return res, nil
+	res.Errs = append(res.Errs, fetchDue(ctx, res.Roots, dirs)...)
+	_, errs, err = reportRound(ctx, herdr, env.StateDir, targets, sent)
+	res.Errs = append(res.Errs, errs...)
+	return res, err
 }
 
-// scan finds the repos under the roots at paths, fetches those last fetched
-// longer ago than the TTL, and reads their state. Roots that nest share
-// their repos, which are fetched and read once.
-func scan(ctx context.Context, paths []string) ([]Root, []error) {
+// target is a workspace githerd reports to: a mapped workspace with its
+// repo, a root workspace with its root, or, with neither, a workspace
+// outside every root whose tokens are cleared.
+type target struct {
+	id   string
+	root *Root
+	repo *Repo
+}
+
+func (t target) tokens() map[string]string {
+	switch {
+	case t.repo != nil:
+		return repoTokens(*t.repo)
+	case t.root != nil:
+		return rootTokens(*t.root)
+	}
+	return map[string]string{}
+}
+
+// reportRound sends each target its tokens, all under one new --seq, and
+// returns the tokens of every target. With sent, the tokens of an earlier
+// round, it skips the targets whose tokens are unchanged, and takes no
+// --seq when none changed. A report Herdr refuses is among the errs.
+func reportRound(ctx context.Context, herdr cli, stateDir string, targets []target, sent map[string]map[string]string) (now map[string]map[string]string, errs []error, err error) {
+	now = map[string]map[string]string{}
+	var changed []target
+	for _, t := range targets {
+		now[t.id] = t.tokens()
+		if old, ok := sent[t.id]; !ok || !maps.Equal(old, now[t.id]) {
+			changed = append(changed, t)
+		}
+	}
+	if len(changed) == 0 {
+		return now, nil, nil
+	}
+	seq, err := nextSeq(stateDir)
+	if err != nil {
+		return now, nil, err
+	}
+	for _, t := range changed {
+		if err := herdr.report(ctx, t.id, seq, now[t.id]); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return now, errs, nil
+}
+
+// fetchDue fetches the repos in dirs due for it and rereads those it
+// fetched, updating the repos of roots in place: their state, and whether
+// they are stale.
+func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
+	outcomes := fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL})
+	stale := staleByDir(outcomes)
+	var fetched []string
+	for _, o := range outcomes {
+		if o.Fetched {
+			fetched = append(fetched, o.Dir)
+		}
+	}
+	repos, errs := status.ReadAll(ctx, fetched)
+	byDir := map[string]status.Repo{}
+	for _, r := range repos {
+		byDir[r.Dir] = r
+	}
+	for i := range roots {
+		for j := range roots[i].Repos {
+			r := &roots[i].Repos[j]
+			if read, ok := byDir[r.Dir]; ok { // a repo that can't be reread keeps its state
+				r.Repo = read
+			}
+			r.Stale = stale[r.Dir]
+		}
+	}
+	return errs
+}
+
+// scan finds the repos under the roots at paths and reads their state, and
+// returns the roots and the dirs of all their repos. Roots that nest share
+// their repos, which are read once and listed once in dirs.
+func scan(ctx context.Context, paths []string) ([]Root, []string, []error) {
 	var errs []error
 	found := make([][]string, len(paths)) // repo dirs of each root
 	var dirs []string                     // repo dirs of every root, once each
@@ -199,12 +284,7 @@ func scan(ctx context.Context, paths []string) ([]Root, []error) {
 		}
 	}
 
-	stale := map[string]error{}
-	for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL}) {
-		if o.Err != nil {
-			stale[o.Dir] = o.Err
-		}
-	}
+	stale := staleByDir(fetch.Last(ctx, dirs))
 	repos, readErrs := status.ReadAll(ctx, dirs)
 	errs = append(errs, readErrs...)
 	byDir := map[string]status.Repo{}
@@ -221,7 +301,18 @@ func scan(ctx context.Context, paths []string) ([]Root, []error) {
 			}
 		}
 	}
-	return roots, errs
+	return roots, dirs, errs
+}
+
+// staleByDir returns why each stale repo among outcomes is stale, by dir.
+func staleByDir(outcomes []fetch.Outcome) map[string]error {
+	stale := map[string]error{}
+	for _, o := range outcomes {
+		if o.Err != nil {
+			stale[o.Dir] = o.Err
+		}
+	}
+	return stale
 }
 
 // underCanon returns dir, which lies under root, with symlinks resolved.

@@ -277,6 +277,7 @@ func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T)
 	t.Parallel()
 	f := gitfixture.New(t)
 	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.FetchedAgo(api, time.Minute) // nothing to fetch: each sync reports once
 	h := newFakeHerdr(t, f)
 	h.roots(f.Path("work") + "\n")
 	h.snapshot(at("api", api))
@@ -361,6 +362,135 @@ func TestSyncReportsEveryOtherWorkspaceWhenHerdrRefusesOne(t *testing.T) {
 	}
 }
 
+// A hanging remote must not hold up the sidebar: sync reports what the
+// repos hold locally before it fetches anything. Once the fetches end, it
+// reports again, under a later --seq, to the workspaces whose tokens changed.
+func TestSyncReportsLocalStateBeforeFetching(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Write(api, "notes.txt", "todo\n")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	docsRemote := f.Remote("docs")
+	docs := f.Clone(docsRemote, "work/repos/acme/docs")
+	f.PushElsewhere(docsRemote, "main", 1) // behind once fetched
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("root", f.Path("work")), at("api", api), at("docs", docs))
+
+	wait := h.startSync()
+	h.waitForCalls(4) // the snapshot and a report to each workspace
+	for _, call := range f.SSHCalls() {
+		if strings.HasPrefix(call, "outlived the fetch") {
+			t.Errorf("the first reports waited for api's hanging remote: %s", call)
+		}
+	}
+	if got := wait(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("want exit 0 and no output; got %+v", got)
+	}
+
+	assertRounds(t, h.calls(),
+		map[string]tokens{ // before fetching
+			"root": {"repos": "1/2", "changes": cleared, "stale": cleared},
+			"api":  {"changes": "●1", "repos": cleared, "stale": cleared},
+			"docs": {"changes": cleared, "repos": cleared, "stale": cleared},
+		},
+		map[string]tokens{ // api's fetch failed, docs is behind; docs's own tokens didn't change
+			"root": {"repos": "2/2", "stale": "⚠1", "changes": cleared},
+			"api":  {"changes": "●1", "stale": "⚠", "repos": cleared},
+		},
+	)
+}
+
+// A sync holds the lock through its fetches and second round: a sync
+// triggered meanwhile leaves the mark and exits at once, and the running
+// sync then runs once more, under a later --seq.
+func TestSyncWhileAnotherFetchesLeavesAMarkForIt(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH()
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@"+gitfixture.HangingHost+"/acme/api.git")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("api", api))
+	stillFetching := func(what string) {
+		t.Helper()
+		for _, call := range f.SSHCalls() {
+			if strings.HasPrefix(call, "outlived the fetch") {
+				t.Errorf("%s only after the running sync's fetch ended", what)
+			}
+		}
+	}
+
+	wait := h.startSync()
+	h.waitForCalls(2) // the snapshot and the first round: the fetch is next
+	got := h.sync("HERDR_PLUGIN_EVENT=workspace.focused")
+	stillFetching("the sync during another returned")
+	if got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("sync during another: want exit 0 and no output; got %+v", got)
+	}
+	if calls := h.peekCalls(); len(calls) != 2 {
+		t.Errorf("the sync during another called herdr: %q", calls[2:])
+	}
+	if got := wait(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("running sync: want exit 0 and no output; got %+v", got)
+	}
+
+	calls := h.calls()
+	if len(calls) != 5 || !reflect.DeepEqual(calls[3], []string{"api", "snapshot"}) {
+		t.Fatalf("want a sync of two rounds, then one of a single round; got %q", calls)
+	}
+	assertRounds(t, calls,
+		map[string]tokens{"api": {"changes": cleared, "repos": cleared, "stale": cleared}},
+		map[string]tokens{"api": {"stale": "⚠", "changes": cleared, "repos": cleared}}, // its fetch failed
+		map[string]tokens{"api": {"stale": "⚠", "changes": cleared, "repos": cleared}}, // the rerun: still stale, not fetched
+	)
+}
+
+// A repo whose fetch failed stays stale, and sync fetches it again only once
+// 15 minutes have passed since the failure. Until then each sync reports it
+// stale from the start and leaves it alone, even if its remote is back.
+func TestSyncRetriesAStaleRepoOnlyAfterTheTTL(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	f.FakeSSH() // every host refuses the connection
+	apiRemote := f.Remote("api")
+	api := f.Clone(apiRemote, "work/repos/acme/api")
+	f.Git(api, "remote", "set-url", "origin", "ssh://git@git.example.com/acme/api.git")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("root", f.Path("work")), at("api", api))
+	fresh := map[string]tokens{
+		"root": {"repos": "✓1", "changes": cleared, "stale": cleared},
+		"api":  {"changes": cleared, "repos": cleared, "stale": cleared},
+	}
+	stale := map[string]tokens{
+		"root": {"repos": "✓1", "stale": "⚠1", "changes": cleared},
+		"api":  {"stale": "⚠", "changes": cleared, "repos": cleared},
+	}
+	sync := func() [][]string {
+		t.Helper()
+		if got := h.sync(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+			t.Fatalf("want exit 0 and no output; got %+v", got)
+		}
+		return h.calls()
+	}
+
+	assertRounds(t, sync(), fresh, stale)
+
+	f.Git(api, "remote", "set-url", "origin", apiRemote) // the remote is back
+	f.Backdate(api, 14*time.Minute)
+	assertRounds(t, sync(), stale)
+
+	f.Backdate(api, 16*time.Minute)
+	assertRounds(t, sync(), stale, fresh)
+	if calls := f.SSHCalls(); len(calls) != 1 {
+		t.Errorf("want one fetch over ssh, the first; got %q", calls)
+	}
+}
+
 // Sync fetches repos last fetched over 15 minutes ago, so behind counts are
 // fresh, and flags the repos whose fetch failed: the root workspace counts
 // them, and a mapped workspace marks its own.
@@ -381,12 +511,21 @@ func TestSyncFetchesWithTheTTLAndFlagsStaleRepos(t *testing.T) {
 	h.roots(f.Path("work") + "\n")
 	h.snapshot(at("root", f.Path("work")), at("docs", docs), at("billing", billing), at("web", web))
 
-	h.assertSynced(h.sync(), map[string]tokens{
-		"root":    {"repos": "1/3", "stale": "⚠1", "changes": cleared},
-		"docs":    {"changes": cleared, "repos": cleared, "stale": cleared},
-		"billing": {"changes": cleared, "repos": cleared, "stale": cleared},
-		"web":     {"stale": "⚠", "changes": cleared, "repos": cleared},
-	})
+	if got := h.sync(); got.code != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("want exit 0 and no output; got %+v", got)
+	}
+	assertRounds(t, h.calls(),
+		map[string]tokens{ // before fetching
+			"root":    {"repos": "✓3", "changes": cleared, "stale": cleared},
+			"docs":    {"changes": cleared, "repos": cleared, "stale": cleared},
+			"billing": {"changes": cleared, "repos": cleared, "stale": cleared},
+			"web":     {"changes": cleared, "repos": cleared, "stale": cleared},
+		},
+		map[string]tokens{ // after
+			"root": {"repos": "1/3", "stale": "⚠1", "changes": cleared},
+			"web":  {"stale": "⚠", "changes": cleared, "repos": cleared},
+		},
+	)
 }
 
 // A workspace maps through the cwd of the first pane listed for its first

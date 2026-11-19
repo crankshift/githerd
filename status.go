@@ -23,7 +23,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	asJSON := fs.Bool("json", false, "print JSON instead of a table")
 	depth := fs.Int("depth", discovery.DefaultDepth, "directory levels below the root to scan")
 	doFetch := fs.Bool("fetch", false, "fetch each repo's upstream remote before reporting")
-	ttl := fs.Duration("ttl", fetch.DefaultTTL, "with --fetch, skip repos fetched less than this long ago")
+	ttl := fs.Duration("ttl", fetch.DefaultTTL, "with --fetch, skip repos fetched, or whose fetch failed, less than this long ago")
 	force := fs.Bool("force", false, "with --fetch, fetch every repo, whatever the TTL")
 	timeout := fs.Duration("fetch-timeout", fetch.DefaultTimeout, "with --fetch, give up on a repo's fetch after this long")
 	positional, err := parseInterspersed(fs, args)
@@ -191,7 +191,7 @@ type jsonRepo struct {
 	Ahead          int     `json:"ahead"`
 	Behind         int     `json:"behind"`
 	NeedsAttention bool    `json:"needsAttention"`
-	Stale          *string `json:"stale"`     // why the fetch failed; null when it didn't fail or didn't run
+	Stale          *string `json:"stale"`     // why the last fetch failed; null when it didn't, or without --fetch
 	FetchedAt      *string `json:"fetchedAt"` // RFC 3339, UTC
 }
 
