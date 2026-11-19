@@ -29,6 +29,10 @@ type Repo struct {
 	Ahead     int
 	Behind    int       // commits the upstream has that the current branch lacks, as of the last fetch
 	FetchedAt time.Time // when the repo was last fetched, from FETCH_HEAD; zero when it never was, or its last fetch failed
+	// Stale is why the repo's last fetch failed, so Behind may be out of
+	// date; empty when it did not fail. Read leaves it empty: the outcomes
+	// of the fetch module set it.
+	Stale string
 }
 
 // NoUpstream reports whether the current branch has no upstream branch. A
@@ -39,6 +43,19 @@ func (r Repo) NoUpstream() bool { return r.Detached == "" && r.Upstream == "" }
 // no upstream. Detached alone does not count.
 func (r Repo) NeedsAttention() bool {
 	return r.Uncommitted > 0 || r.Ahead > 0 || r.Behind > 0 || r.NoUpstream()
+}
+
+// Tally counts how many of repos need attention, and how many are stale.
+func Tally(repos []Repo) (attention, stale int) {
+	for _, r := range repos {
+		if r.NeedsAttention() {
+			attention++
+		}
+		if r.Stale != "" {
+			stale++
+		}
+	}
+	return attention, stale
 }
 
 // Read returns the state of the repo in dir.

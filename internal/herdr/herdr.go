@@ -74,13 +74,7 @@ type Root struct {
 	// they are spelled. The repos are found under it, so their dirs have
 	// symlinks resolved too: discovery follows none below the root.
 	Dir   string
-	Repos []Repo // in path order; the root first when it is a repo
-}
-
-// Repo is the state of one repo under a root.
-type Repo struct {
-	status.Repo
-	Stale error // why its last fetch failed, so behind may be out of date; nil when it didn't fail
+	Repos []status.Repo // in path order, the root first when it is a repo; Stale is set
 }
 
 // Workspace is a Herdr workspace and where its first pane's cwd lies.
@@ -226,7 +220,7 @@ func mapWorkspaces(roots []Root, snap snapshot) ([]Workspace, []target) {
 type target struct {
 	id   string
 	root *Root
-	repo *Repo
+	repo *status.Repo
 }
 
 func (t target) tokens() map[string]string {
@@ -272,7 +266,6 @@ func reportRound(ctx context.Context, herdr cli, stateDir string, targets []targ
 // they are stale.
 func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
 	outcomes := fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL})
-	stale := staleByDir(outcomes)
 	var fetched []string
 	for _, o := range outcomes {
 		if o.Fetched {
@@ -285,13 +278,12 @@ func fetchDue(ctx context.Context, roots []Root, dirs []string) []error {
 		byDir[r.Dir] = r
 	}
 	for i := range roots {
-		for j := range roots[i].Repos {
-			r := &roots[i].Repos[j]
+		for j, r := range roots[i].Repos {
 			if read, ok := byDir[r.Dir]; ok { // a repo that can't be reread keeps its state
-				r.Repo = read
+				roots[i].Repos[j] = read
 			}
-			r.Stale = stale[r.Dir]
 		}
+		fetch.MarkStale(roots[i].Repos, outcomes)
 	}
 	return errs
 }
@@ -320,9 +312,9 @@ func scanRoots(ctx context.Context, configDir string) ([]Root, []string, []error
 		}
 	}
 
-	stale := staleByDir(fetch.Last(ctx, dirs))
 	repos, readErrs := status.ReadAll(ctx, dirs)
 	errs = append(errs, readErrs...)
+	fetch.MarkStale(repos, fetch.Last(ctx, dirs))
 	byDir := map[string]status.Repo{}
 	for _, r := range repos {
 		byDir[r.Dir] = r
@@ -331,22 +323,11 @@ func scanRoots(ctx context.Context, configDir string) ([]Root, []string, []error
 	for i := range roots {
 		for _, dir := range found[i] {
 			if r, ok := byDir[dir]; ok { // an unreadable repo is left out
-				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, Stale: stale[dir]})
+				roots[i].Repos = append(roots[i].Repos, r)
 			}
 		}
 	}
 	return roots, dirs, errs
-}
-
-// staleByDir returns why each stale repo among outcomes is stale, by dir.
-func staleByDir(outcomes []fetch.Outcome) map[string]error {
-	stale := map[string]error{}
-	for _, o := range outcomes {
-		if o.Err != nil {
-			stale[o.Dir] = o.Err
-		}
-	}
-	return stale
 }
 
 // canonical returns path cleaned and with symlinks resolved, or only
@@ -361,7 +342,7 @@ func canonical(path string) string {
 // locate returns the root that contains cwd, the deepest one when roots
 // nest, and the deepest repo under it, other than the root itself, that
 // contains cwd. Either is nil when nothing contains cwd, or cwd is unknown.
-func locate(roots []Root, cwd string) (*Root, *Repo) {
+func locate(roots []Root, cwd string) (*Root, *status.Repo) {
 	if !filepath.IsAbs(cwd) {
 		return nil, nil
 	}
@@ -375,7 +356,7 @@ func locate(roots []Root, cwd string) (*Root, *Repo) {
 	if root == nil {
 		return nil, nil
 	}
-	var repo *Repo
+	var repo *status.Repo
 	for i := range root.Repos {
 		r := &root.Repos[i]
 		if r.Dir != root.Dir && within(cwd, r.Dir) && (repo == nil || len(r.Dir) > len(repo.Dir)) {

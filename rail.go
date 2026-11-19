@@ -251,11 +251,7 @@ func loaded(res herdr.Result, errs ...error) tui.Loaded {
 		}
 	}
 	for _, root := range res.Roots {
-		r := tui.Root{Name: tildePath(root.Path), Dir: root.Dir}
-		for _, repo := range root.Repos {
-			r.Repos = append(r.Repos, tui.Repo{Repo: repo.Repo, Stale: errText(repo.Stale)})
-		}
-		l.Roots = append(l.Roots, r)
+		l.Roots = append(l.Roots, tui.Root{Name: tildePath(root.Path), Dir: root.Dir, Repos: root.Repos})
 	}
 	// A session always has a workspace, the rail's own; with none, the
 	// snapshot could not be read.

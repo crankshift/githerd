@@ -77,11 +77,9 @@ type Root struct {
 	Repos []Repo // in discovery order: the root first when it is a repo
 }
 
-// Repo is the state of one repo under a root.
-type Repo struct {
-	status.Repo        // Dir is absolute, with symlinks resolved
-	Stale       string // why its last fetch failed; empty when it did not
-}
+// Repo is the state of one repo under a root. Its Dir is absolute, with
+// symlinks resolved.
+type Repo = status.Repo
 
 // Cmd is a request the terminal layer carries out for the model.
 type Cmd interface{ cmd() }

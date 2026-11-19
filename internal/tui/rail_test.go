@@ -40,7 +40,7 @@ func work() tui.Root {
 
 func repo(dir string, r status.Repo) tui.Repo {
 	r.Dir = dir
-	return tui.Repo{Repo: r}
+	return r
 }
 
 func stale(r tui.Repo) tui.Repo {

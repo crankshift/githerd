@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/crankshift/githerd/internal/status"
 )
 
 // railKey handles a key on the rail.
@@ -261,14 +263,7 @@ func (m Model) counts(w int) Line {
 	attention, stale, total := 0, 0, 0
 	if r := m.shown(); r != nil {
 		total = len(r.Repos)
-		for _, repo := range r.Repos {
-			if repo.NeedsAttention() {
-				attention++
-			}
-			if repo.Stale != "" {
-				stale++
-			}
-		}
+		attention, stale = status.Tally(r.Repos)
 	}
 	tally := Style{Color: Green, Bold: true}
 	if attention > 0 {

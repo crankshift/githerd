@@ -67,31 +67,32 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "githerd:", err)
 		return 1
 	}
-	stale := map[string]fetch.Outcome{} // failed fetches by repo dir
+	var outcomes []fetch.Outcome
 	if *doFetch {
-		for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force, Timeout: *timeout}) {
-			if o.Err != nil {
-				stale[o.Dir] = o
-			}
-		}
+		outcomes = fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force, Timeout: *timeout})
 	}
 	repos, errs := status.ReadAll(ctx, dirs)
+	fetch.MarkStale(repos, outcomes)
 	for _, err := range errs {
 		fmt.Fprintln(stderr, "githerd:", err)
 	}
 
 	if *asJSON {
-		if err := printJSON(stdout, root, repos, stale); err != nil {
+		if err := printJSON(stdout, root, repos); err != nil {
 			fmt.Fprintln(stderr, "githerd:", err)
 			return 1
 		}
 	} else {
-		printTable(stdout, root, repos, stale)
+		printTable(stdout, root, repos)
 		// Why each listed stale repo is stale; an unreadable repo's read
 		// error above already covers its fetch.
+		remotes := map[string]string{}
+		for _, o := range outcomes {
+			remotes[o.Dir] = o.Remote
+		}
 		for _, r := range repos {
-			if o, ok := stale[r.Dir]; ok {
-				fmt.Fprintf(stderr, "githerd: %s: %s: %v\n", relPath(root, r.Dir), strings.TrimSpace("fetch "+o.Remote), o.Err)
+			if r.Stale != "" {
+				fmt.Fprintf(stderr, "githerd: %s: %s: %s\n", relPath(root, r.Dir), strings.TrimSpace("fetch "+remotes[r.Dir]), r.Stale)
 			}
 		}
 	}
@@ -133,7 +134,7 @@ func setFlag(fs *flag.FlagSet, names ...string) string {
 	return ""
 }
 
-func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]fetch.Outcome) {
+func printTable(w io.Writer, root string, repos []status.Repo) {
 	if len(repos) == 0 {
 		fmt.Fprintln(w, "0 of 0 repos need attention")
 		return
@@ -141,15 +142,7 @@ func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "REPO\tBRANCH\tUNCOMMITTED\tAHEAD\tBEHIND\tUPSTREAM\tNOTE")
-	attention, stales := 0, 0
 	for _, r := range repos {
-		if r.NeedsAttention() {
-			attention++
-		}
-		_, isStale := stale[r.Dir]
-		if isStale {
-			stales++
-		}
 		upstream := r.Upstream
 		if upstream == "" {
 			upstream = "-"
@@ -159,7 +152,7 @@ func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]
 			branch = r.Detached
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			relPath(root, r.Dir), branch, r.Uncommitted, r.Ahead, r.Behind, upstream, note(r, isStale))
+			relPath(root, r.Dir), branch, r.Uncommitted, r.Ahead, r.Behind, upstream, note(r))
 	}
 	tw.Flush()
 	for _, line := range strings.SplitAfter(buf.String(), "\n") {
@@ -167,6 +160,7 @@ func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]
 			fmt.Fprintln(w, strings.TrimRight(line, " \n"))
 		}
 	}
+	attention, stales := status.Tally(repos)
 	fmt.Fprintf(w, "%d of %d repos need attention", attention, len(repos))
 	if stales > 0 {
 		fmt.Fprintf(w, ", %d stale", stales)
@@ -195,7 +189,7 @@ type jsonRepo struct {
 	FetchedAt      *string `json:"fetchedAt"` // RFC 3339, UTC
 }
 
-func printJSON(w io.Writer, root string, repos []status.Repo, stale map[string]fetch.Outcome) error {
+func printJSON(w io.Writer, root string, repos []status.Repo) error {
 	report := jsonReport{Root: root, Repos: make([]jsonRepo, 0, len(repos))}
 	for _, r := range repos {
 		j := jsonRepo{
@@ -207,12 +201,10 @@ func printJSON(w io.Writer, root string, repos []status.Repo, stale map[string]f
 			Ahead:          r.Ahead,
 			Behind:         r.Behind,
 			NeedsAttention: r.NeedsAttention(),
+			Stale:          nullable(r.Stale),
 		}
 		if !r.FetchedAt.IsZero() {
 			j.FetchedAt = nullable(r.FetchedAt.UTC().Format(time.RFC3339))
-		}
-		if o, ok := stale[r.Dir]; ok {
-			j.Stale = nullable(o.Err.Error())
 		}
 		report.Repos = append(report.Repos, j)
 	}
@@ -230,7 +222,7 @@ func nullable(s string) *string {
 }
 
 // note names the states of r that the number columns don't show.
-func note(r status.Repo, stale bool) string {
+func note(r status.Repo) string {
 	var notes []string
 	switch {
 	case r.Detached != "":
@@ -238,7 +230,7 @@ func note(r status.Repo, stale bool) string {
 	case r.NoUpstream():
 		notes = append(notes, "no upstream")
 	}
-	if stale {
+	if r.Stale != "" {
 		notes = append(notes, "stale")
 	}
 	return strings.Join(notes, ", ")

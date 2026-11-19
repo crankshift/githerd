@@ -73,6 +73,23 @@ func Last(ctx context.Context, dirs []string) []Outcome {
 	})
 }
 
+// MarkStale sets the Stale of each of repos that has an outcome among
+// outcomes: why its fetch failed, or empty when it did not.
+func MarkStale(repos []status.Repo, outcomes []Outcome) {
+	byDir := make(map[string]Outcome, len(outcomes))
+	for _, o := range outcomes {
+		byDir[o.Dir] = o
+	}
+	for i := range repos {
+		if o, ok := byDir[repos[i].Dir]; ok {
+			repos[i].Stale = ""
+			if o.Err != nil {
+				repos[i].Stale = o.Err.Error()
+			}
+		}
+	}
+}
+
 // each runs do for every dir, a few at a time, and returns the outcomes in
 // the order of dirs.
 func each(dirs []string, do func(dir string) Outcome) []Outcome {
