@@ -30,11 +30,17 @@ const (
 	fakeCallsFile    = "calls.jsonl"   // one JSON array of argv per call
 	fakeHoldFile     = "hold"          // while it exists, `api snapshot` waits
 	fakeClosedFile   = "closed"        // ids of workspaces closed since the snapshot, one per line
+	fakeShellsFile   = "shells"        // ids of panes that came back as plain shells after a restart, one per line
 )
+
+// fakeOpenedPane is the id of the pane `plugin pane open` opens in workspace
+// ws.
+func fakeOpenedPane(ws string) string { return ws + ":p9" }
 
 // runFakeHerdr is the fake herdr. It records its argv, serves the canned
 // snapshot, and accepts every workspace report-metadata call silently, as
-// herdr does on success, unless the workspace was closed.
+// herdr does on success, unless the workspace was closed. It opens, focuses
+// and resizes plugin panes, answering as Herdr 0.9.5 does.
 func runFakeHerdr(dir string, args []string) int {
 	line, _ := json.Marshal(args)
 	calls, err := os.OpenFile(filepath.Join(dir, fakeCallsFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -73,6 +79,34 @@ func runFakeHerdr(dir string, args []string) int {
 				return 1
 			}
 		}
+		return 0
+	case len(args) > 2 && args[0] == "pane" && args[1] == "report-metadata":
+		return 0
+	case len(args) > 3 && args[0] == "plugin" && args[1] == "pane" && args[2] == "open":
+		ws := "w1"
+		for i, arg := range args {
+			if arg == "--target-pane" && i+1 < len(args) {
+				ws, _, _ = strings.Cut(args[i+1], ":")
+			}
+		}
+		fmt.Printf(`{"id":"cli:plugin","result":{"type":"plugin_pane_opened","plugin_pane":{"plugin_id":"githerd","entrypoint":"rail",`+
+			`"pane":{"pane_id":%q,"workspace_id":%q,"tab_id":"%s:t1","focused":true,"label":"githerd","agent_status":"unknown","revision":1}}}}`+"\n",
+			fakeOpenedPane(ws), ws, ws)
+		return 0
+	case len(args) == 4 && args[0] == "plugin" && args[1] == "pane" && args[2] == "focus":
+		shells, _ := os.ReadFile(filepath.Join(dir, fakeShellsFile))
+		for _, id := range strings.Fields(string(shells)) {
+			if id == args[3] {
+				fmt.Fprintln(os.Stderr, `{"id":"cli:plugin","error":{"code":"plugin_pane_not_found","message":"plugin pane not found"}}`)
+				return 1
+			}
+		}
+		ws, _, _ := strings.Cut(args[3], ":")
+		fmt.Printf(`{"id":"cli:plugin","result":{"type":"plugin_pane_focused","plugin_pane":{"plugin_id":"githerd","entrypoint":"rail",`+
+			`"pane":{"pane_id":%q,"workspace_id":%q,"focused":true,"agent_status":"unknown","revision":1}}}}`+"\n", args[3], ws)
+		return 0
+	case len(args) > 2 && args[0] == "pane" && args[1] == "resize":
+		fmt.Println(`{"id":"cli:pane:resize","result":{"type":"pane_resize","resize":{"changed":true}}}`)
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "fake herdr: unexpected command %q\n", args)
@@ -176,6 +210,20 @@ func (h *fakeHerdr) hold() (release func()) {
 	}
 }
 
+// forget makes Herdr forget that pane is a plugin pane, as a live handoff
+// does, so `plugin pane focus` on it fails.
+func (h *fakeHerdr) forget(pane string) {
+	h.t.Helper()
+	f, err := os.OpenFile(filepath.Join(h.dir, fakeShellsFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintln(f, pane); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // waitForCalls waits until n herdr calls were made since the last calls,
 // and fails the test if that takes over 10 seconds.
 func (h *fakeHerdr) waitForCalls(n int) {
@@ -230,7 +278,8 @@ type workspace struct {
 type pane struct {
 	cwd           string
 	foregroundCwd string
-	focused       bool
+	focused       bool              // the session's focused pane; without one, the first workspace's first pane is
+	tokens        map[string]string // pane tokens reported to it
 }
 
 // at returns a workspace with one tab holding one pane whose cwd is cwd.
@@ -245,6 +294,20 @@ func (h *fakeHerdr) snapshot(workspaces ...workspace) {
 	h.t.Helper()
 	type obj = map[string]any
 	var wss, tabs, panes, layouts []obj
+	focusedWs, focusedPane := 0, ""
+	if len(workspaces) > 0 && len(workspaces[0].tabs) > 0 && len(workspaces[0].tabs[0]) > 0 {
+		focusedPane = workspaces[0].id + ":p1"
+	}
+	for i, w := range workspaces {
+		n := 0
+		for _, tabPanes := range w.tabs {
+			for _, p := range tabPanes {
+				if n++; p.focused {
+					focusedWs, focusedPane = i, fmt.Sprintf("%s:p%d", w.id, n)
+				}
+			}
+		}
+	}
 	for i, w := range workspaces {
 		paneCount := 0
 		for ti, tabPanes := range w.tabs {
@@ -256,7 +319,10 @@ func (h *fakeHerdr) snapshot(workspaces ...workspace) {
 				paneCount++
 				paneID := fmt.Sprintf("%s:p%d", w.id, paneCount)
 				info := obj{"pane_id": paneID, "terminal_id": "term-" + paneID, "workspace_id": w.id, "tab_id": tabID,
-					"focused": p.focused, "agent_status": "unknown", "revision": 1}
+					"focused": paneID == focusedPane, "agent_status": "unknown", "revision": 1}
+				if len(p.tokens) > 0 {
+					info["tokens"] = p.tokens
+				}
 				if p.cwd != "" {
 					info["cwd"] = p.cwd
 				}
@@ -264,21 +330,26 @@ func (h *fakeHerdr) snapshot(workspaces ...workspace) {
 					info["foreground_cwd"] = p.foregroundCwd
 				}
 				panes = append(panes, info)
-				layoutPanes = append(layoutPanes, obj{"pane_id": paneID, "focused": p.focused,
+				layoutPanes = append(layoutPanes, obj{"pane_id": paneID, "focused": paneID == focusedPane,
 					"rect": obj{"x": 0, "y": 0, "width": 80, "height": 24}})
 			}
 			layouts = append(layouts, obj{"workspace_id": w.id, "tab_id": tabID, "zoomed": false,
 				"area": obj{"x": 0, "y": 0, "width": 80, "height": 24}, "panes": layoutPanes, "splits": []obj{}})
 		}
-		info := obj{"workspace_id": w.id, "number": i + 1, "label": "ws-" + w.id, "focused": i == 0,
+		info := obj{"workspace_id": w.id, "number": i + 1, "label": "ws-" + w.id, "focused": i == focusedWs,
 			"pane_count": paneCount, "tab_count": len(w.tabs), "active_tab_id": w.id + ":t1", "agent_status": "idle"}
 		if len(w.tokens) > 0 {
 			info["tokens"] = w.tokens
 		}
 		wss = append(wss, info)
 	}
-	snap, err := json.Marshal(obj{"version": "0.9.5", "protocol": 22,
-		"workspaces": wss, "tabs": tabs, "panes": panes, "layouts": layouts, "agents": []obj{}})
+	session := obj{"version": "0.9.5", "protocol": 22,
+		"workspaces": wss, "tabs": tabs, "panes": panes, "layouts": layouts, "agents": []obj{}}
+	if focusedPane != "" {
+		ws := workspaces[focusedWs].id
+		session["focused_workspace_id"], session["focused_tab_id"], session["focused_pane_id"] = ws, ws+":t1", focusedPane
+	}
+	snap, err := json.Marshal(session)
 	if err != nil {
 		h.t.Fatal(err)
 	}

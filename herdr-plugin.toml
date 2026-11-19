@@ -33,3 +33,22 @@ command = ["./bin/githerd", "herdr", "sync"]
 [[events]]
 on = "pane.agent_status_changed"
 command = ["./bin/githerd", "herdr", "sync"]
+
+# Focuses the rail of the current workspace, or opens one beside the
+# focused pane. Bind it in config.toml:
+#   [[keys.command]]
+#   key = "prefix+g"
+#   type = "plugin_action"
+#   command = "githerd.rail"
+[[actions]]
+id = "rail"
+title = "githerd rail"
+contexts = ["workspace"]
+command = ["./bin/githerd", "herdr", "rail"]
+
+# The rail: every repo under the root, refreshed every 30 seconds.
+[[panes]]
+id = "rail"
+title = "githerd"
+placement = "split"
+command = ["./bin/githerd", "rail"]

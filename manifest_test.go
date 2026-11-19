@@ -47,6 +47,25 @@ func TestPluginManifestRunsTheSyncOnStartupAndOnWorkspaceAndAgentEvents(t *testi
 	}
 }
 
+// A keybinding runs the rail action, githerd.rail, which opens the rail
+// pane as a split; the pane runs the rail itself.
+func TestPluginManifestDeclaresTheRailActionAndPane(t *testing.T) {
+	m := readManifest(t, "herdr-plugin.toml")
+
+	if got, want := m.tables["actions"], []map[string]any{{
+		"id": "rail", "title": "githerd rail", "contexts": []any{"workspace"},
+		"command": []any{"./bin/githerd", "herdr", "rail"},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("[[actions]]:\n got %v\nwant %v", got, want)
+	}
+	if got, want := m.tables["panes"], []map[string]any{{
+		"id": "rail", "title": "githerd", "placement": "split",
+		"command": []any{"./bin/githerd", "rail"},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("[[panes]]:\n got %v\nwant %v", got, want)
+	}
+}
+
 // manifest is a herdr-plugin.toml, read just far enough for these tests:
 // top-level keys, and the keys of each [[array]] table, with values that are
 // strings or arrays of strings.
