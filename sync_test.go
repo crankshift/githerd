@@ -3,6 +3,7 @@ package main_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/crankshift/githerd/internal/gitfixture"
 )
@@ -43,6 +44,62 @@ func TestSyncReportsTheRootSummaryToRootWorkspaces(t *testing.T) {
 		"w1": {"repos": "6/10", "changes": cleared, "stale": cleared},
 		"w2": {"repos": "6/10", "changes": cleared, "stale": cleared},
 		"w3": {"repos": "✓2", "changes": cleared, "stale": cleared},
+	})
+}
+
+// Sync fetches repos last fetched over 15 minutes ago, so behind counts are
+// fresh, and flags the repos whose fetch failed: the root workspace counts
+// them, and a mapped workspace marks its own.
+func TestSyncFetchesWithTheTTLAndFlagsStaleRepos(t *testing.T) {
+	f := gitfixture.New(t)
+	docsRemote := f.Remote("docs")
+	docs := f.Clone(docsRemote, "work/repos/acme/docs")
+	f.PushElsewhere(docsRemote, "main", 1) // never fetched since the clone: fetched now, so behind
+	billingRemote := f.Remote("billing")
+	billing := f.Clone(billingRemote, "work/repos/acme/billing")
+	f.FetchedAgo(billing, 5*time.Minute)
+	f.PushElsewhere(billingRemote, "main", 1) // fetched within the TTL: not fetched again
+	webRemote := f.Remote("web")
+	web := f.Clone(webRemote, "work/repos/acme/web")
+	rename(t, webRemote, webRemote+".moved") // its fetch fails
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("root", f.Path("work")), at("docs", docs), at("billing", billing), at("web", web))
+
+	h.assertSynced(h.sync(), map[string]tokens{
+		"root":    {"repos": "1/3", "stale": "⚠1", "changes": cleared},
+		"docs":    {"changes": cleared, "repos": cleared, "stale": cleared},
+		"billing": {"changes": cleared, "repos": cleared, "stale": cleared},
+		"web":     {"stale": "⚠", "changes": cleared, "repos": cleared},
+	})
+}
+
+// A workspace maps through the cwd of the first pane listed for its first
+// tab. The focused pane, other tabs, and the cwd an agent moved its own
+// process to don't move the workspace.
+func TestSyncMapsAWorkspaceThroughTheFirstPaneOfItsFirstTab(t *testing.T) {
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.Write(api, "notes.txt", "todo\n")
+	web := f.Clone(f.Remote("web"), "work/repos/acme/web")
+	f.Write(web, "a.txt", "a\n")
+	f.Write(web, "b.txt", "b\n")
+	docs := f.Clone(f.Remote("docs"), "work/repos/acme/docs")
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(
+		workspace{id: "w1", tabs: [][]pane{
+			{{cwd: api, foregroundCwd: web}, {cwd: web, focused: true}},
+			{{cwd: docs}},
+		}},
+		workspace{id: "w2", tabs: [][]pane{
+			{{}}, // no cwd known yet
+			{{cwd: web}},
+		}},
+	)
+
+	h.assertSynced(h.sync(), map[string]tokens{
+		"w1": {"changes": "●1", "repos": cleared, "stale": cleared},
 	})
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crankshift/githerd/internal/discovery"
+	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -66,6 +67,7 @@ type Root struct {
 // Repo is the state of one repo under a root.
 type Repo struct {
 	status.Repo
+	Stale error  // why its fetch failed, so behind may be out of date; nil when it didn't fail
 	canon string // Dir with symlinks resolved
 }
 
@@ -90,11 +92,7 @@ func Sync(ctx context.Context, env Env) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	for _, path := range paths {
-		root, errs := scan(ctx, path)
-		res.Roots = append(res.Roots, root)
-		res.Errs = append(res.Errs, errs...)
-	}
+	res.Roots, res.Errs = scan(ctx, paths)
 
 	seq := uint64(time.Now().UnixMilli())
 	for _, sw := range snap.Workspaces {
@@ -120,18 +118,50 @@ func Sync(ctx context.Context, env Env) (Result, error) {
 	return res, nil
 }
 
-// scan finds the repos under the root at path and reads their state.
-func scan(ctx context.Context, path string) (Root, []error) {
-	root := Root{Path: path, canon: canonical(path)}
-	dirs, err := discovery.Repos(path, discovery.DefaultDepth)
-	if err != nil {
-		return root, []error{fmt.Errorf("root %s: %w", path, err)}
+// scan finds the repos under the roots at paths, fetches those last fetched
+// longer ago than the TTL, and reads their state. Roots that nest share
+// their repos, which are fetched and read once.
+func scan(ctx context.Context, paths []string) ([]Root, []error) {
+	var errs []error
+	found := make([][]string, len(paths)) // repo dirs of each root
+	var dirs []string                     // repo dirs of every root, once each
+	seen := map[string]bool{}
+	for i, path := range paths {
+		var err error
+		if found[i], err = discovery.Repos(path, discovery.DefaultDepth); err != nil {
+			errs = append(errs, fmt.Errorf("root %s: %w", path, err))
+		}
+		for _, dir := range found[i] {
+			if !seen[dir] {
+				seen[dir] = true
+				dirs = append(dirs, dir)
+			}
+		}
 	}
-	repos, errs := status.ReadAll(ctx, dirs)
+
+	stale := map[string]error{}
+	for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: fetch.DefaultTTL}) {
+		if o.Err != nil {
+			stale[o.Dir] = o.Err
+		}
+	}
+	repos, readErrs := status.ReadAll(ctx, dirs)
+	errs = append(errs, readErrs...)
+	byDir := map[string]status.Repo{}
 	for _, r := range repos {
-		root.Repos = append(root.Repos, Repo{Repo: r, canon: underCanon(root, r.Dir)})
+		byDir[r.Dir] = r
 	}
-	return root, errs
+
+	roots := make([]Root, len(paths))
+	for i, path := range paths {
+		roots[i] = Root{Path: path, canon: canonical(path)}
+		for _, dir := range found[i] {
+			if r, ok := byDir[dir]; ok { // an unreadable repo is left out
+				roots[i].Repos = append(roots[i].Repos, Repo{Repo: r, Stale: stale[dir], canon: underCanon(roots[i], dir)})
+			}
+		}
+	}
+	return roots, errs
 }
 
 // underCanon returns dir, which lies under root, with symlinks resolved.

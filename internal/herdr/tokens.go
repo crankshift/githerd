@@ -10,23 +10,29 @@ import (
 var tokenNames = []string{"repos", "changes", "stale"}
 
 // rootTokens are the tokens of a root workspace: how many of the root's
-// repos need attention, of how many.
+// repos need attention, of how many, and how many are stale.
 func rootTokens(root Root) map[string]string {
-	attention := 0
+	attention, stale := 0, 0
 	for _, r := range root.Repos {
 		if r.NeedsAttention() {
 			attention++
+		}
+		if r.Stale != nil {
+			stale++
 		}
 	}
 	toks := map[string]string{"repos": fmt.Sprintf("✓%d", len(root.Repos))}
 	if attention > 0 {
 		toks["repos"] = fmt.Sprintf("%d/%d", attention, len(root.Repos))
 	}
+	if stale > 0 {
+		toks["stale"] = fmt.Sprintf("⚠%d", stale)
+	}
 	return toks
 }
 
 // repoTokens are the tokens of a workspace mapped to repo: its uncommitted
-// count, and ∅ when it has no upstream.
+// count, ∅ when it has no upstream, and whether it is stale.
 func repoTokens(repo Repo) map[string]string {
 	var changes []string
 	if repo.Uncommitted > 0 {
@@ -38,6 +44,9 @@ func repoTokens(repo Repo) map[string]string {
 	toks := map[string]string{}
 	if len(changes) > 0 {
 		toks["changes"] = strings.Join(changes, " ")
+	}
+	if repo.Stale != nil {
+		toks["stale"] = "⚠"
 	}
 	return toks
 }
