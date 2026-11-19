@@ -5,7 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -28,12 +28,15 @@ type Outcome struct {
 	Dir     string
 	Remote  string // remote of the current branch's upstream; empty when there is none, so nothing was fetched
 	Fetched bool   // git fetch ran and succeeded; false when the repo was skipped
-	Err     error  // git fetch failed
+	Err     error  // why the fetch failed, in one line; the repo is stale
 }
 
-// Run fetches the remote of each repo's upstream, skipping repos fetched
-// within opts.TTL unless opts.Force is set. It returns one outcome per repo,
-// in the order of dirs.
+// Run fetches the remote of each repo's upstream and returns one outcome per
+// repo, in the order of dirs.
+//
+// It skips a repo fetched less than opts.TTL ago, unless opts.Force is set.
+// The clock is the mtime of FETCH_HEAD. Git empties FETCH_HEAD when a fetch
+// fails, so a stale repo is fetched again whatever the TTL.
 func Run(ctx context.Context, dirs []string, opts Options) []Outcome {
 	outcomes := make([]Outcome, len(dirs))
 	for i, dir := range dirs {
@@ -54,9 +57,8 @@ func one(ctx context.Context, dir string, opts Options) Outcome {
 			return o
 		}
 	}
-	if _, o.Err = git(ctx, dir, "fetch", "--quiet", o.Remote); o.Err == nil {
-		o.Fetched = true
-	}
+	_, o.Err = git(ctx, dir, "fetch", "--quiet", o.Remote)
+	o.Fetched = o.Err == nil
 	return o
 }
 
@@ -77,6 +79,8 @@ func upstreamRemote(ctx context.Context, dir string) (string, error) {
 	return "", sc.Err()
 }
 
+// git runs git in dir. Its error is the first line git printed on stderr:
+// git puts the cause there and generic advice after it.
 func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -84,11 +88,12 @@ func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+		for _, line := range strings.Split(stderr.String(), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				return nil, errors.New(line)
+			}
 		}
-		return nil, fmt.Errorf("git %s: %s", args[0], msg)
+		return nil, err
 	}
 	return out, nil
 }

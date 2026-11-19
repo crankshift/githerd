@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -98,6 +99,51 @@ func TestStatusFetchSkipsReposWithNoUpstreamRemote(t *testing.T) {
 	assertField(t, "stale", field(t, got, "stale"), nothingFetched)
 }
 
+// A failed fetch empties FETCH_HEAD, so a stale repo is fetched again on the
+// next run whatever the TTL, and stays stale until a fetch succeeds.
+func TestStatusFetchMarksARepoWithAnUnreachableRemoteStale(t *testing.T) {
+	f := gitfixture.New(t)
+	webRemote := f.Remote("web")
+	f.Clone(webRemote, "work/repos/acme/web")
+	f.Clone(f.Remote("docs"), "work/repos/acme/docs")
+	f.PushElsewhere(webRemote, "main", 1)
+	moved := f.Path("remotes/web-moved.git")
+	rename(t, webRemote, moved)
+	root := f.Path("work")
+	reason := "fatal: '" + webRemote + "' does not appear to be a git repository"
+
+	got := githerd(t, f.Env(), root, "status", "--fetch")
+
+	assertOutput(t, got, ""+
+		"REPO             BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+		"repos/acme/docs  main    0            0      0       origin/main\n"+
+		"repos/acme/web   main    0            0      0       origin/main  stale\n"+
+		"0 of 2 repos need attention, 1 stale\n")
+	if want := "githerd: repos/acme/web: fetch origin: " + reason + "\n"; got.stderr != want {
+		t.Errorf("stderr mismatch\n--- got ---\n%s\n--- want ---\n%s", got.stderr, want)
+	}
+
+	got = githerd(t, f.Env(), root, "status", "--json", "--fetch")
+
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{
+		"repos/acme/docs": "null",
+		"repos/acme/web":  jsonString(t, reason),
+	})
+	if at := field(t, got, "fetchedAt")["repos/acme/web"]; at != "null" {
+		t.Errorf("want fetchedAt null for the stale repo, got %s", at)
+	}
+
+	rename(t, moved, webRemote)
+	got = githerd(t, f.Env(), root, "status", "--json", "--fetch")
+
+	assertField(t, "stale", field(t, got, "stale"), map[string]string{
+		"repos/acme/docs": "null", "repos/acme/web": "null",
+	})
+	assertField(t, "behind", field(t, got, "behind"), map[string]string{
+		"repos/acme/docs": "0", "repos/acme/web": "1",
+	})
+}
+
 func TestStatusRejectsFetchOptionsWithoutFetch(t *testing.T) {
 	f := gitfixture.New(t)
 	f.Clone(f.Remote("web"), "work/repos/acme/web")
@@ -138,5 +184,12 @@ func assertField(t *testing.T, name string, got, want map[string]string) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("%s by repo:\n got %v\nwant %v", name, got, want)
+	}
+}
+
+func rename(t *testing.T, from, to string) {
+	t.Helper()
+	if err := os.Rename(from, to); err != nil {
+		t.Fatal(err)
 	}
 }

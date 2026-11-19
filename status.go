@@ -66,8 +66,13 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "githerd:", err)
 		return 1
 	}
+	stale := map[string]fetch.Outcome{} // failed fetches by repo dir
 	if *doFetch {
-		fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force})
+		for _, o := range fetch.Run(ctx, dirs, fetch.Options{TTL: *ttl, Force: *force}) {
+			if o.Err != nil {
+				stale[o.Dir] = o
+			}
+		}
 	}
 	repos, errs := readAll(ctx, dirs)
 	for _, err := range errs {
@@ -75,12 +80,17 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 
 	if *asJSON {
-		if err := printJSON(stdout, root, repos); err != nil {
+		if err := printJSON(stdout, root, repos, stale); err != nil {
 			fmt.Fprintln(stderr, "githerd:", err)
 			return 1
 		}
 	} else {
-		printTable(stdout, root, repos)
+		printTable(stdout, root, repos, stale)
+		for _, dir := range dirs {
+			if o, ok := stale[dir]; ok {
+				fmt.Fprintf(stderr, "githerd: %s: %s: %v\n", relPath(root, dir), strings.TrimSpace("fetch "+o.Remote), o.Err)
+			}
+		}
 	}
 	if len(errs) > 0 {
 		return 1
@@ -150,7 +160,7 @@ func readAll(ctx context.Context, dirs []string) ([]status.Repo, []error) {
 	return ok, failed
 }
 
-func printTable(w io.Writer, root string, repos []status.Repo) {
+func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]fetch.Outcome) {
 	if len(repos) == 0 {
 		fmt.Fprintln(w, "0 of 0 repos need attention")
 		return
@@ -158,10 +168,14 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "REPO\tBRANCH\tUNCOMMITTED\tAHEAD\tBEHIND\tUPSTREAM\tNOTE")
-	attention := 0
+	attention, stales := 0, 0
 	for _, r := range repos {
 		if r.NeedsAttention() {
 			attention++
+		}
+		_, isStale := stale[r.Dir]
+		if isStale {
+			stales++
 		}
 		upstream := r.Upstream
 		if upstream == "" {
@@ -172,7 +186,7 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 			branch = r.Detached
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
-			relPath(root, r.Dir), branch, r.Uncommitted, r.Ahead, r.Behind, upstream, note(r))
+			relPath(root, r.Dir), branch, r.Uncommitted, r.Ahead, r.Behind, upstream, note(r, isStale))
 	}
 	tw.Flush()
 	for _, line := range strings.SplitAfter(buf.String(), "\n") {
@@ -180,7 +194,11 @@ func printTable(w io.Writer, root string, repos []status.Repo) {
 			fmt.Fprintln(w, strings.TrimRight(line, " \n"))
 		}
 	}
-	fmt.Fprintf(w, "%d of %d repos need attention\n", attention, len(repos))
+	fmt.Fprintf(w, "%d of %d repos need attention", attention, len(repos))
+	if stales > 0 {
+		fmt.Fprintf(w, ", %d stale", stales)
+	}
+	fmt.Fprintln(w)
 }
 
 // jsonReport is the shape of `githerd status --json`.
@@ -200,11 +218,11 @@ type jsonRepo struct {
 	Ahead          int     `json:"ahead"`
 	Behind         int     `json:"behind"`
 	NeedsAttention bool    `json:"needsAttention"`
-	Stale          *string `json:"stale"`     // fetch error; null until fetching exists
+	Stale          *string `json:"stale"`     // why the fetch failed; null when it didn't fail or didn't run
 	FetchedAt      *string `json:"fetchedAt"` // RFC 3339, UTC
 }
 
-func printJSON(w io.Writer, root string, repos []status.Repo) error {
+func printJSON(w io.Writer, root string, repos []status.Repo, stale map[string]fetch.Outcome) error {
 	report := jsonReport{Root: root, Repos: make([]jsonRepo, 0, len(repos))}
 	for _, r := range repos {
 		j := jsonRepo{
@@ -219,6 +237,9 @@ func printJSON(w io.Writer, root string, repos []status.Repo) error {
 		}
 		if !r.FetchedAt.IsZero() {
 			j.FetchedAt = nullable(r.FetchedAt.UTC().Format(time.RFC3339))
+		}
+		if o, ok := stale[r.Dir]; ok {
+			j.Stale = nullable(o.Err.Error())
 		}
 		report.Repos = append(report.Repos, j)
 	}
@@ -236,14 +257,18 @@ func nullable(s string) *string {
 }
 
 // note names the states of r that the number columns don't show.
-func note(r status.Repo) string {
+func note(r status.Repo, stale bool) string {
+	var notes []string
 	switch {
 	case r.Detached != "":
-		return "detached"
+		notes = append(notes, "detached")
 	case r.NoUpstream():
-		return "no upstream"
+		notes = append(notes, "no upstream")
 	}
-	return ""
+	if stale {
+		notes = append(notes, "stale")
+	}
+	return strings.Join(notes, ", ")
 }
 
 // relPath returns dir relative to root, with forward slashes.
