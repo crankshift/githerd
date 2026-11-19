@@ -90,11 +90,30 @@ func (c cli) run(ctx context.Context, args ...string) ([]byte, error) {
 	return nil, fmt.Errorf("%s: %s", name, msg)
 }
 
+// idIn returns the id that the JSON result of a herdr call holds at path,
+// such as "pane", "pane_id" for the pane `pane split` opened. out is what
+// the call printed, and call names it in the error when there is no id.
+func idIn(call string, out []byte, path ...string) (string, error) {
+	var node any
+	if json.Unmarshal(out, &node) == nil {
+		for _, key := range append([]string{"result"}, path...) {
+			fields, _ := node.(map[string]any)
+			node = fields[key]
+		}
+	}
+	if id, _ := node.(string); id != "" {
+		return id, nil
+	}
+	return "", fmt.Errorf("%s: no %s in %s", call, strings.ReplaceAll(path[len(path)-1], "_", " "), out)
+}
+
 // snapshot is the part of Herdr's session snapshot that githerd reads.
 // Workspaces come in sidebar order; tabs in tab-bar order, grouped by
 // workspace; panes in layout order, grouped by tab.
 type snapshot struct {
-	Workspaces []struct {
+	FocusedWorkspace string `json:"focused_workspace_id"`
+	FocusedPane      string `json:"focused_pane_id"`
+	Workspaces       []struct {
 		ID     string            `json:"workspace_id"`
 		Label  string            `json:"label"`
 		Tokens map[string]string `json:"tokens"`
@@ -104,8 +123,11 @@ type snapshot struct {
 		WorkspaceID string `json:"workspace_id"`
 	} `json:"tabs"`
 	Panes []struct {
-		TabID string `json:"tab_id"`
-		Cwd   string `json:"cwd"`
+		ID          string            `json:"pane_id"`
+		WorkspaceID string            `json:"workspace_id"`
+		TabID       string            `json:"tab_id"`
+		Cwd         string            `json:"cwd"`
+		Tokens      map[string]string `json:"tokens"` // pane tokens, such as the rail's mark
 	} `json:"panes"`
 }
 

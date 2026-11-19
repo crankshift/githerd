@@ -3,7 +3,6 @@ package herdr
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 )
 
@@ -31,29 +30,12 @@ const railWidth = "0.25"
 // focused pane, marks it, and narrows it.
 func OpenRail(ctx context.Context, env Env) error {
 	herdr := cli{bin: env.Bin}
-	out, err := herdr.run(ctx, "api", "snapshot")
+	snap, err := herdr.snapshot(ctx)
 	if err != nil {
 		return err
 	}
-	var resp struct {
-		Result struct {
-			Snapshot struct {
-				FocusedWorkspace string `json:"focused_workspace_id"`
-				FocusedPane      string `json:"focused_pane_id"`
-				Panes            []struct {
-					ID        string            `json:"pane_id"`
-					Workspace string            `json:"workspace_id"`
-					Tokens    map[string]string `json:"tokens"`
-				} `json:"panes"`
-			} `json:"snapshot"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("herdr api snapshot: %v", err)
-	}
-	snap := resp.Result.Snapshot
 	for _, p := range snap.Panes {
-		if p.Workspace != snap.FocusedWorkspace || p.Tokens[railToken] != railValue {
+		if p.WorkspaceID != snap.FocusedWorkspace || p.Tokens[railToken] != railValue {
 			continue
 		}
 		// Focusing fails on a pane Herdr no longer counts as a plugin
@@ -67,23 +49,14 @@ func OpenRail(ctx context.Context, env Env) error {
 	if p := snap.FocusedPane; p != "" {
 		args = append(args, "--target-pane", p)
 	}
-	out, err = herdr.run(ctx, append(args, "--direction", "right", "--focus")...)
+	out, err := herdr.run(ctx, append(args, "--direction", "right", "--focus")...)
 	if err != nil {
 		return err
 	}
-	var opened struct {
-		Result struct {
-			PluginPane struct {
-				Pane struct {
-					ID string `json:"pane_id"`
-				} `json:"pane"`
-			} `json:"plugin_pane"`
-		} `json:"result"`
+	rail, err := idIn("herdr plugin pane open", out, "plugin_pane", "pane", "pane_id")
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(out, &opened); err != nil || opened.Result.PluginPane.Pane.ID == "" {
-		return fmt.Errorf("herdr plugin pane open: no pane id in %s", out)
-	}
-	rail := opened.Result.PluginPane.Pane.ID
 	if err := MarkRail(ctx, env, rail); err != nil {
 		return err
 	}

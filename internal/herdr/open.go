@@ -1,10 +1,6 @@
 package herdr
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-)
+import "context"
 
 // FocusWorkspace focuses workspace id.
 func FocusWorkspace(ctx context.Context, env Env, id string) error {
@@ -19,17 +15,7 @@ func CreateWorkspace(ctx context.Context, env Env, dir, label string) (string, e
 	if err != nil {
 		return "", err
 	}
-	var resp struct {
-		Result struct {
-			Workspace struct {
-				ID string `json:"workspace_id"`
-			} `json:"workspace"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(out, &resp); err != nil || resp.Result.Workspace.ID == "" {
-		return "", fmt.Errorf("herdr workspace create: no workspace id in %s", out)
-	}
-	return resp.Result.Workspace.ID, nil
+	return idIn("herdr workspace create", out, "workspace", "workspace_id")
 }
 
 // OpenShell splits pane with a shell in dir below it and focuses the shell.
@@ -41,16 +27,10 @@ func OpenShell(ctx context.Context, env Env, pane, dir, command string) error {
 	if err != nil || command == "" {
 		return err
 	}
-	var resp struct {
-		Result struct {
-			Pane struct {
-				ID string `json:"pane_id"`
-			} `json:"pane"`
-		} `json:"result"`
+	shell, err := idIn("herdr pane split", out, "pane", "pane_id")
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(out, &resp); err != nil || resp.Result.Pane.ID == "" {
-		return fmt.Errorf("herdr pane split: no pane id in %s", out)
-	}
-	_, err = herdr.run(ctx, "pane", "run", resp.Result.Pane.ID, command)
+	_, err = herdr.run(ctx, "pane", "run", shell, command)
 	return err
 }
