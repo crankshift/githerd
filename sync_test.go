@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -317,6 +318,57 @@ func TestSyncDuringAnotherLeavesAMarkAndTheRunningSyncRunsOnceMore(t *testing.T)
 	if calls := h.calls(); len(calls) != 2 {
 		t.Errorf("want one snapshot and one report; got %q", calls)
 	}
+}
+
+// A sync that finds the mark when it ends takes the lock again to run once
+// more. When another sync took the lock first, that one runs in its place,
+// and the sync that ended still answers for the run it did: here, a report
+// Herdr refused.
+func TestSyncThatLosesTheLockBeforeItsRerunStillReportsItsRun(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
+	f.FetchedAgo(api, time.Minute) // nothing to fetch
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api), at("w2", api))
+	writeFile(t, filepath.Join(h.dir, fakeClosedFile), "w2\n")
+
+	release := h.hold()
+	wait := h.startSync()
+	h.waitForCalls(1) // the first sync holds the lock, waiting on its snapshot
+	if got := h.sync("HERDR_PLUGIN_EVENT=workspace.focused"); got.code != 0 || got.stderr != "" {
+		t.Fatalf("sync during another: want exit 0 and no output; got %+v", got)
+	}
+	letGo := h.lockNext()
+	defer letGo()
+	release()
+
+	want := "githerd herdr sync: herdr workspace report-metadata: workspace w2 not found\n"
+	if got := wait(); got.code != 1 || got.stderr != want {
+		t.Errorf("the sync that lost the lock: want exit 1 and stderr %q; got %+v", want, got)
+	}
+}
+
+// lockNext stands in for a sync that takes the sync lock the moment the
+// running one lets go of it. It holds a fresh sync.lock in the state dir,
+// which the running sync finds held when it tries the lock again. letGo
+// releases it.
+func (h *fakeHerdr) lockNext() (letGo func()) {
+	h.t.Helper()
+	path := filepath.Join(h.stateDir(), "sync.lock")
+	if err := os.Remove(path); err != nil {
+		h.t.Fatal(err)
+	}
+	lock, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		h.t.Fatal(err)
+	}
+	return func() { lock.Close() }
 }
 
 func TestSyncFailsOutsideHerdrAndWhenHerdrIsNotRunning(t *testing.T) {

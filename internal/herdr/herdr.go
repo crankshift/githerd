@@ -119,7 +119,9 @@ func Look(ctx context.Context, env Env) (Result, error) {
 // Hooks fire in bursts, so one sync runs at a time, under a lock in the
 // state dir. A sync that finds the lock held leaves a mark and returns at
 // once; the running sync finds the mark when it finishes and runs once more,
-// so a burst costs two syncs and its last trigger is not lost.
+// so a burst costs two syncs and its last trigger is not lost. When another
+// sync takes the lock first, that one runs once more instead, and Sync
+// returns the run it did.
 func Sync(ctx context.Context, env Env) (Result, error) {
 	if !worthSyncing(env.Event) {
 		return Result{}, nil
@@ -127,15 +129,18 @@ func Sync(ctx context.Context, env Env) (Result, error) {
 	if err := os.MkdirAll(env.StateDir, 0o755); err != nil {
 		return Result{}, err
 	}
+	l, err := lock(env.StateDir)
+	if err != nil || l == nil {
+		return Result{}, err
+	}
 	for {
-		l, err := lock(env.StateDir)
-		if err != nil || l == nil {
-			return Result{}, err
-		}
 		res, err := syncOnce(ctx, env)
 		res.Ran = true
 		rerun := l.unlock()
 		if err != nil || !rerun {
+			return res, err
+		}
+		if l, err = lock(env.StateDir); err != nil || l == nil {
 			return res, err
 		}
 	}
