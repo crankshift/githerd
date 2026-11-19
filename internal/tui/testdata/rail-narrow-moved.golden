@@ -7,4 +7,4 @@
 │repos/acme/docs        ✓│ dim
 │repos/tools/lint-rules ⌀│ dim
 │────────────────────────│
-│/ filter f fetch q quit │
+│/ filter o ws s shell f…│

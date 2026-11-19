@@ -15,4 +15,4 @@
 │                                                  │
 │                                                  │
 │──────────────────────────────────────────────────│
-│/ filter  f fetch  q quit                         │
+│/ filter  o ws  s shell  f fetch  q quit          │

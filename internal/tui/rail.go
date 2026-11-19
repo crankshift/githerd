@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,6 +25,8 @@ func railKey(m Model, k Key) (Model, []Cmd) {
 		m.filter = ""
 	case "f":
 		return m.forceFetch()
+	case "o", "s", "L":
+		return act(m, k)
 	case "q":
 		return m, []Cmd{Quit{}}
 	}
@@ -82,13 +85,20 @@ func (m Model) move(n int) Model {
 // filter, rule.
 const railHeader = 3
 
-// footerRows is how many rows the rail's footer takes: what went wrong, if
-// anything did, a rule and the keys.
-func (m Model) footerRows() int {
-	if len(m.problems) > 0 {
-		return 3
+// footerRows is how many rows the rail's footer takes.
+func (m Model) footerRows() int { return len(m.footer(0, Line{})) }
+
+// footer is the rail's footer: the note, or else what went wrong if
+// anything did, then a rule and the keys.
+func (m Model) footer(w int, keys Line) Screen {
+	footer := Screen{rule(w), keys}
+	switch {
+	case m.note != "":
+		footer = append(Screen{{Spans: fit([]Span{{Text: m.note, Style: Style{Color: Yellow}}}, w)}}, footer...)
+	case len(m.problems) > 0:
+		footer = append(Screen{m.problemLine(w)}, footer...)
 	}
-	return 2
+	return footer
 }
 
 // settle moves the cursor to the first line when its repo is not listed,
@@ -162,17 +172,14 @@ func railView(m Model, w, h int) Screen {
 		return noRootsView(m, w, h)
 	}
 	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
-	footer := Screen{rule(w), keys(w, "/", "filter", "f", "fetch", "q", "quit")}
-	if len(m.problems) > 0 {
-		footer = append(Screen{m.problemLine(w)}, footer...)
-	}
+	footer := m.footer(w, keys(w, "/", "filter", "o", "ws", "s", "shell", "f", "fetch", "q", "quit"))
 
 	lines := m.lines()
 	cur := m.cursor(lines)
 	body := max(h-railHeader-len(footer), 0)
 	top := scroll(m.top, cur, len(lines), body)
 	for i := top; i < len(lines) && i < top+body; i++ {
-		screen = append(screen, repoLine(lines[i], i == cur, w))
+		screen = append(screen, repoLine(lines[i], m.mappedTo(lines[i].repo.Dir), i == cur, w))
 	}
 	if len(lines) == 0 && m.filter != "" {
 		screen = append(screen, Line{Spans: fit([]Span{{Text: "no repo matches", Style: Style{Dim: true}}}, w)})
@@ -204,10 +211,7 @@ func noRootsView(m Model, w, h int) Screen {
 	for _, text := range texts {
 		screen = append(screen, Line{Spans: fit([]Span{{Text: text}}, w)})
 	}
-	footer := Screen{rule(w), keys(w, "q", "quit")}
-	if len(m.problems) > 0 {
-		footer = append(Screen{m.problemLine(w)}, footer...)
-	}
+	footer := m.footer(w, keys(w, "q", "quit"))
 	for len(screen) < h-len(footer) {
 		screen = append(screen, blank(w))
 	}
@@ -349,9 +353,19 @@ func (m Model) subhead(w int) Line {
 }
 
 // repoLine draws one repo: its path on the left, its state glyphs on the
-// right. A clean repo is dimmed.
-func repoLine(l line, selected bool, w int) Line {
+// right, followed by ⧉ and the label of each of the workspaces mapped to it
+// when they fit beside the repo's own name. A clean repo is dimmed.
+func repoLine(l line, workspaces []Workspace, selected bool, w int) Line {
 	right := glyphs(l.repo)
+	if len(workspaces) > 0 {
+		named := slices.Clone(right)
+		for _, ws := range workspaces {
+			named = append(named, Span{Text: " "}, Span{Text: "⧉" + ws.Label, Style: Style{Color: Cyan}})
+		}
+		if width(path.Base(l.label)) <= w-width(spansText(named))-1 {
+			right = named
+		}
+	}
 	return Line{
 		Spans:    leftRight([]Span{{Text: cutPath(l.label, w-width(spansText(right))-1)}}, right, w),
 		Selected: selected,
