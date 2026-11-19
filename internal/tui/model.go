@@ -108,6 +108,9 @@ type Model struct {
 	placed   bool   // the cursor was put on the start repo
 	top      int    // index of the first list line in view
 
+	filter    string // keeps the lines whose path holds its letters in order
+	filtering bool   // keys go to the filter
+
 	refreshing bool      // a Refresh is running
 	next       time.Time // when the next refresh is due
 }
@@ -120,19 +123,18 @@ func New(opts Options) (Model, []Cmd) {
 
 // Update returns the model after msg, and the commands it calls for.
 func Update(m Model, msg Msg) (Model, []Cmd) {
+	var cmds []Cmd
 	switch msg := msg.(type) {
 	case Resize:
 		m.height = msg.Height
-		return m, nil
 	case Tick:
 		m.now = msg.Now
-		return m, nil
 	case Loaded:
-		return loaded(m, msg)
+		m, cmds = loaded(m, msg)
 	case Key:
-		return railKey(m, msg)
+		m, cmds = railKey(m, msg)
 	}
-	return m, nil
+	return m.settle(), cmds
 }
 
 // View draws the model width columns wide and height rows high.

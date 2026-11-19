@@ -4,6 +4,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,4 +105,94 @@ func TestRailFitsANarrowPane(t *testing.T) {
 	m := railModel(t, "/work/sandbox/experiments/data/raw", work())
 
 	assertView(t, m, 24, 10, "rail-narrow")
+}
+
+// selected returns the text of the selected line of the view, without the
+// blanks around it; "" when no line is selected.
+func selected(m tui.Model, width, height int) string {
+	for _, l := range tui.View(m, width, height) {
+		if l.Selected {
+			return strings.TrimSpace(l.Text())
+		}
+	}
+	return ""
+}
+
+// listed returns the repo lines of the rail's view at 50×18, without the
+// blanks around them.
+func listed(m tui.Model) []string {
+	screen := tui.View(m, 50, 18)
+	var out []string
+	for _, l := range screen[3 : len(screen)-2] {
+		if text := strings.TrimSpace(l.Text()); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// / starts a filter: what is typed then keeps the repos whose path holds its
+// letters in order, whatever their case. Enter keeps the filter and gives
+// the keys back to the list; Esc clears it. The cursor stays on its repo.
+func TestRailFiltersReposWithSlash(t *testing.T) {
+	m := railModel(t, "/work/repos/acme/api", work())
+
+	billing := "repos/acme/billing" + strings.Repeat(" ", 30) + "⇡2"
+	cli := "repos/tools/cli" + strings.Repeat(" ", 31) + "∅ ⇡3"
+
+	m, _ = press(m, "/", "a", "c", "m", "E")
+	assertView(t, m, 50, 18, "rail-filter")
+
+	m, _ = press(m, tui.KeyEnter, "j")
+	if got := selected(m, 50, 18); got != billing {
+		t.Errorf("j after Enter selected %q, want %q", got, billing)
+	}
+	if got, want := tui.View(m, 50, 18)[1].Text(), "/acmE"+strings.Repeat(" ", 36)+"esc clear"; got != want {
+		t.Errorf("with the filter kept, the header shows %q, want %q", got, want)
+	}
+
+	m, _ = press(m, tui.KeyEsc)
+	if got := len(listed(m)); got != 10 {
+		t.Errorf("after Esc, %d repos listed, want all 10", got)
+	}
+	if got := selected(m, 50, 18); got != billing {
+		t.Errorf("after Esc, selected %q, want %q", got, billing)
+	}
+
+	m, _ = press(m, "/", "r", "t", "c")
+	if got, want := listed(m), []string{cli}; !slices.Equal(got, want) {
+		t.Errorf("/rtc lists %q, want %q", got, want)
+	}
+	if got, want := selected(m, 50, 18), cli; got != want {
+		t.Errorf("with its repo filtered out, the cursor went to %q, want the first match %q", got, want)
+	}
+	m, _ = press(m, "x")
+	if got, want := listed(m), []string{"no repo matches"}; !slices.Equal(got, want) {
+		t.Errorf("/rtcx lists %q, want %q", got, want)
+	}
+	m, _ = press(m, tui.KeyBackspace, tui.KeyBackspace, tui.KeyBackspace, tui.KeyBackspace, tui.KeyEsc)
+	if got := len(listed(m)); got != 10 {
+		t.Errorf("after Backspace and Esc, %d repos listed, want all 10", got)
+	}
+}
+
+// j and k, or the arrows, move the cursor. The list scrolls only as far as
+// keeps the cursor in view, and the cursor stops at either end.
+func TestRailMovesTheCursorWithJKAndTheArrows(t *testing.T) {
+	m := railModel(t, "/work/sandbox/experiments/data/raw", work())
+	m, _ = tui.Update(m, tui.Resize{Width: 24, Height: 10})
+
+	m, _ = press(m, "k", "k", "k", tui.KeyUp, "k", tui.KeyDown)
+	assertView(t, m, 24, 10, "rail-narrow-moved")
+
+	m, _ = press(m, "j", "j", "j", "j", "j", "j")
+	if got, want := selected(m, 24, 10), "…/experiments/data     ✓"; got != want {
+		t.Errorf("after j past the end, selected %q, want %q", got, want)
+	}
+	for range 12 {
+		m, _ = press(m, "k")
+	}
+	if got, want := selected(m, 24, 10), "repos/acme/api     ●3 ⇡2"; got != want {
+		t.Errorf("after k past the start, selected %q, want %q", got, want)
+	}
 }

@@ -4,12 +4,92 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
 // railKey handles a key on the rail.
 func railKey(m Model, k Key) (Model, []Cmd) {
+	if m.filtering {
+		return filterKey(m, k), nil
+	}
+	switch k {
+	case "j", KeyDown:
+		m = m.move(1)
+	case "k", KeyUp:
+		m = m.move(-1)
+	case "/":
+		m.filtering = true
+	case KeyEsc:
+		m.filter = ""
+	}
 	return m, nil
+}
+
+// filterKey handles a key while the filter is being typed: a character
+// extends it, Backspace shortens it, Enter keeps it and Esc clears it. The
+// arrows still move.
+func filterKey(m Model, k Key) Model {
+	switch k {
+	case KeyEnter:
+		m.filtering = false
+	case KeyEsc:
+		m.filtering, m.filter = false, ""
+	case KeyBackspace:
+		if runes := []rune(m.filter); len(runes) > 0 {
+			m.filter = string(runes[:len(runes)-1])
+		}
+	case KeyUp:
+		m = m.move(-1)
+	case KeyDown:
+		m = m.move(1)
+	default:
+		if r := []rune(k); len(r) == 1 && r[0] >= ' ' {
+			m.filter += string(k)
+		}
+	}
+	return m
+}
+
+// matches reports whether label holds the letters of filter in order,
+// whatever their case.
+func matches(label, filter string) bool {
+	rest := []rune(strings.ToLower(filter))
+	for _, r := range strings.ToLower(label) {
+		if len(rest) > 0 && r == rest[0] {
+			rest = rest[1:]
+		}
+	}
+	return len(rest) == 0
+}
+
+// move moves the cursor by n lines, stopping at either end.
+func (m Model) move(n int) Model {
+	lines := m.lines()
+	if len(lines) == 0 {
+		return m
+	}
+	i := min(max(m.cursor(lines)+n, 0), len(lines)-1)
+	m.selected = lines[i].repo.Dir
+	return m
+}
+
+// Rows of the rail around its list.
+const (
+	railHeader = 3 // counts, root or filter, rule
+	railFooter = 2 // rule, keys
+)
+
+// settle moves the cursor to the first line when its repo is not listed,
+// as when the filter hides it, and scrolls the list as little as keeps the
+// cursor in view at the height of the terminal.
+func (m Model) settle() Model {
+	lines := m.lines()
+	if len(lines) > 0 && !slices.ContainsFunc(lines, func(l line) bool { return l.repo.Dir == m.selected }) {
+		m.selected = lines[0].repo.Dir
+	}
+	m.top = scroll(m.top, m.cursor(lines), len(lines), m.height-railHeader-railFooter)
+	return m
 }
 
 // line is one repo line of the rail.
@@ -18,8 +98,8 @@ type line struct {
 	label string // the repo's path under the root; ". (root)" for the root
 }
 
-// lines returns the rail's repo lines: repos that need attention first,
-// then clean ones, each group in discovery order.
+// lines returns the rail's repo lines that match the filter: repos that
+// need attention first, then clean ones, each group in discovery order.
 func (m Model) lines() []line {
 	r := m.shown()
 	if r == nil {
@@ -36,7 +116,9 @@ func (m Model) lines() []line {
 		default:
 			label = filepath.ToSlash(label)
 		}
-		out = append(out, line{repo: repo, label: label})
+		if matches(label, m.filter) {
+			out = append(out, line{repo: repo, label: label})
+		}
 	}
 	slices.SortStableFunc(out, func(a, b line) int {
 		return boolOrder(b.repo.NeedsAttention()) - boolOrder(a.repo.NeedsAttention())
@@ -65,15 +147,18 @@ func (m Model) cursor(lines []line) int {
 // railView draws the rail: a header with the counts and the root, the repo
 // lines, and the keys.
 func railView(m Model, w, h int) Screen {
-	screen := Screen{m.counts(w), Line{Spans: fit([]Span{{Text: m.rootName()}}, w)}, rule(w)}
+	screen := Screen{m.counts(w), m.subhead(w), rule(w)}
 	footer := Screen{rule(w), keys(w, "/", "filter", "f", "fetch", "q", "quit")}
 
 	lines := m.lines()
 	cur := m.cursor(lines)
-	body := max(h-len(screen)-len(footer), 0)
+	body := max(h-railHeader-railFooter, 0)
 	top := scroll(m.top, cur, len(lines), body)
 	for i := top; i < len(lines) && i < top+body; i++ {
 		screen = append(screen, repoLine(lines[i], i == cur, w))
+	}
+	if len(lines) == 0 && m.filter != "" {
+		screen = append(screen, Line{Spans: fit([]Span{{Text: "no repo matches", Style: Style{Dim: true}}}, w)})
 	}
 	for len(screen) < h-len(footer) {
 		screen = append(screen, blank(w))
@@ -154,12 +239,25 @@ func scroll(top, cur, n, height int) int {
 	return max(top, 0)
 }
 
-// rootName is the name of the root shown.
-func (m Model) rootName() string {
-	if r := m.shown(); r != nil {
-		return r.Name
+// subhead is the header's second line: the filter while there is one, else
+// the root shown.
+func (m Model) subhead(w int) Line {
+	hint := Style{Dim: true}
+	switch {
+	case m.filtering:
+		return Line{Spans: leftRight(
+			[]Span{{Text: "/", Style: Style{Color: Blue}}, {Text: m.filter}, {Text: "▏", Style: Style{Color: Blue}}},
+			[]Span{{Text: "enter keep · esc clear", Style: hint}}, w)}
+	case m.filter != "":
+		return Line{Spans: leftRight(
+			[]Span{{Text: "/", Style: Style{Color: Blue}}, {Text: m.filter}},
+			[]Span{{Text: "esc clear", Style: hint}}, w)}
 	}
-	return ""
+	name := ""
+	if r := m.shown(); r != nil {
+		name = r.Name
+	}
+	return Line{Spans: fit([]Span{{Text: name}}, w)}
 }
 
 // repoLine draws one repo: its path on the left, its state glyphs on the
