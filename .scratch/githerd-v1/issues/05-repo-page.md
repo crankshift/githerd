@@ -4,13 +4,13 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Enter returns a zoom-on command for the rail's own pane (`--pane`, never the focused pane); Esc returns zoom-off and goes back to the rail with the cursor kept
-- [ ] Changes: staged and unstaged diffs; untracked files shown in full as added
-- [ ] To push and To pull list commits; the selected commit shows its full diff
-- [ ] Branches: local branches with upstream ahead/behind or "no upstream", plus remote-only branches; the selected branch shows a summary and its recent commits
-- [ ] Log: recent commits of HEAD
-- [ ] `z` toggles zoom of the rail's own pane from the rail or the repo page (`pane zoom --pane <rail> --toggle`)
-- [ ] Diff lines show old and new line numbers when the width allows
-- [ ] Golden tests of `View` for a busy repo and a clean one; tests that Enter and Esc return the zoom commands
+- [x] Enter returns a zoom-on command for the rail's own pane (`--pane`, never the focused pane); Esc returns zoom-off and goes back to the rail with the cursor kept
+- [x] Changes: staged and unstaged diffs; untracked files shown in full as added
+- [x] To push and To pull list commits; the selected commit shows its full diff
+- [x] Branches: local branches with upstream ahead/behind or "no upstream", plus remote-only branches; the selected branch shows a summary and its recent commits
+- [x] Log: recent commits of HEAD
+- [x] `z` toggles zoom of the rail's own pane from the rail or the repo page (`pane zoom --pane <rail> --toggle`)
+- [x] Diff lines show old and new line numbers when the width allows
+- [x] Golden tests of `View` for a busy repo and a clean one; tests that Enter and Esc return the zoom commands
