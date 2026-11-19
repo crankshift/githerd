@@ -194,9 +194,11 @@ func upstreamRemote(ctx context.Context, dir string) (string, error) {
 	return "", sc.Err()
 }
 
-// git runs git in dir with the caller's environment.
+// git runs a git command that only reads the repo in dir, with the
+// caller's environment. It takes no optional locks, so it never competes
+// with git commands the user or an agent runs there.
 func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return gitEnv(ctx, dir, nil, args...)
+	return gitEnv(ctx, dir, nil, append([]string{"--no-optional-locks"}, args...)...)
 }
 
 // gitEnv runs git in dir with env, or the caller's environment when env is
