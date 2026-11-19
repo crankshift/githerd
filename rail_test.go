@@ -28,28 +28,11 @@ func TestRailRunsInItsPaneAndRestoresTheTerminalOnQuit(t *testing.T) {
 	term := newPTY(t, 60, 20)
 	before := term.termios()
 
-	cmd := exec.Command(githerdBin, "rail")
-	cmd.Dir = f.Path(".")
-	cmd.Env = append(h.env(), "PWD="+cmd.Dir, "HERDR_PANE_ID=w1:p9",
-		`HERDR_PLUGIN_CONTEXT_JSON={"workspace_id":"w1","focused_pane_id":"w1:p1","focused_pane_cwd":"`+api+`"}`)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = term.slave, term.slave, term.slave
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
-	t.Cleanup(func() { cmd.Process.Kill() })
-
+	exited := h.startRail(term, api)
 	pos := term.waitFor(0, "\x1b[?1049h")
 	pos = term.waitFor(pos, "\x1b[7mrepos/acme/api")
 	term.waitFor(pos, "need attention")
-	for deadline := time.Now().Add(10 * time.Second); !slices.ContainsFunc(h.peekCalls(), isWorkspaceReport); time.Sleep(10 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatalf("the rail ran no sync; herdr calls %q", h.peekCalls())
-		}
-	}
-	pos = term.waitFor(pos, "↻ ")
+	pos = h.waitForSync(term, pos)
 
 	term.typed("j")
 	pos = term.waitFor(pos, "\x1b[7mrepos/acme/billing")
@@ -76,6 +59,68 @@ func TestRailRunsInItsPaneAndRestoresTheTerminalOnQuit(t *testing.T) {
 	if mark := []string{"pane", "report-metadata", "w1:p9", "--source", "githerd", "--token", "githerd=rail"}; !slices.ContainsFunc(h.peekCalls(), func(c []string) bool { return slices.Equal(c, mark) }) {
 		t.Errorf("the rail did not mark its pane with %q; herdr calls %q", mark, h.peekCalls())
 	}
+}
+
+// f fetches every repo of the root at once, even one fetched within the
+// TTL, so commits pushed since show up as behind.
+func TestRailFetchesEveryRepoAtOnceWithF(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	remote := f.Remote("api")
+	api := f.Clone(remote, "work/api")
+	f.FetchedAgo(api, time.Minute) // within the 15-minute TTL
+	f.PushElsewhere(remote, "main", 2)
+	h := newFakeHerdr(t, f)
+	h.roots(f.Path("work") + "\n")
+	h.snapshot(at("w1", api))
+	term := newPTY(t, 60, 20)
+
+	exited := h.startRail(term, api)
+	pos := h.waitForSync(term, 0)
+	if strings.Contains(term.output(), "⇣2") {
+		t.Fatalf("the rail fetched a repo within the TTL before f; terminal:\n%q", term.output())
+	}
+	term.typed("f")
+	pos = term.waitFor(pos, "fetching…")
+	term.waitFor(pos, "⇣2")
+
+	term.typed("q")
+	if err := <-exited; err != nil {
+		t.Fatalf("the rail exited with %v", err)
+	}
+}
+
+// startRail starts githerd rail on term as Herdr runs it in the pane it
+// opened, as w1:p9, split from a pane whose cwd is cwd. The channel gets the
+// rail's exit.
+func (h *fakeHerdr) startRail(term *pty, cwd string) <-chan error {
+	h.t.Helper()
+	cmd := exec.Command(githerdBin, "rail")
+	cmd.Dir = h.f.Path(".")
+	cmd.Env = append(h.env(), "PWD="+cmd.Dir, "HERDR_PANE_ID=w1:p9",
+		`HERDR_PLUGIN_CONTEXT_JSON={"workspace_id":"w1","focused_pane_id":"w1:p1","focused_pane_cwd":"`+cwd+`"}`)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = term.slave, term.slave, term.slave
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
+		h.t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	h.t.Cleanup(func() { cmd.Process.Kill() })
+	return exited
+}
+
+// waitForSync waits until the rail has run a sync, which reported to a
+// workspace, and drawn its countdown after the output at pos. It returns
+// where the countdown ends.
+func (h *fakeHerdr) waitForSync(term *pty, pos int) int {
+	h.t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !slices.ContainsFunc(h.peekCalls(), isWorkspaceReport); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("the rail ran no sync; herdr calls %q", h.peekCalls())
+		}
+	}
+	return term.waitFor(pos, "↻ ")
 }
 
 func isWorkspaceReport(argv []string) bool {
