@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Go module `github.com/crankshift/githerd` with a `githerd` command; no third-party dependencies
-- [ ] Test fixture helper builds, in a temp dir, a bare "remote" plus clones in each state: uncommitted (modified and untracked), ahead, behind, diverged, no upstream with local commits, no remote at all, detached, and a repo nested in a repo
-- [ ] Discovery finds repos with a `.git` directory or file, to depth 3 by default, descending into repos, skipping hidden directories and `node_modules`; the root is listed first when it is a repo
-- [ ] Each repo reports branch or detached commit, upstream, uncommitted, ahead, behind; with no upstream, ahead counts commits on no remote branch
-- [ ] Needs attention follows the glossary; detached alone does not count
-- [ ] Table output is sorted by path with a summary line "N of T repos need attention"; `--json` matches the shape in the spec
-- [ ] Black-box tests run the binary against the fixtures and assert on its output
+- [x] Go module `github.com/crankshift/githerd` with a `githerd` command; no third-party dependencies
+- [x] Test fixture helper builds, in a temp dir, a bare "remote" plus clones in each state: uncommitted (modified and untracked), ahead, behind, diverged, no upstream with local commits, no remote at all, detached, and a repo nested in a repo
+- [x] Discovery finds repos with a `.git` directory or file, to depth 3 by default, descending into repos, skipping hidden directories and `node_modules`; the root is listed first when it is a repo
+- [x] Each repo reports branch or detached commit, upstream, uncommitted, ahead, behind; with no upstream, ahead counts commits on no remote branch
+- [x] Needs attention follows the glossary; detached alone does not count
+- [x] Table output is sorted by path with a summary line "N of T repos need attention"; `--json` matches the shape in the spec
+- [x] Black-box tests run the binary against the fixtures and assert on its output
