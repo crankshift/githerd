@@ -50,7 +50,7 @@ func TestRailLinesNameTheWorkspacesMappedToTheirRepo(t *testing.T) {
 
 // Each sync's snapshot renames the lines: workspaces created, closed or
 // moved in Herdr show up at the next refresh. A refresh that could not read
-// the workspaces, as when another sync held the lock, keeps those it had.
+// the workspaces, as when the snapshot failed, keeps those it had.
 func TestRailLinesFollowTheWorkspacesOfEachSync(t *testing.T) {
 	m := synced(t, "/work/repos/acme/api", tui.Options{Pane: railPane}, session())
 	api := "repos/acme/api" + strings.Repeat(" ", 26) + "●3 ⇡2 ⧉api"

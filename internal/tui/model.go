@@ -48,8 +48,9 @@ type Loaded struct {
 	Problems []string // what went wrong while reading, such as a repo git could not read
 	Refresh  bool     // it answers a Refresh
 	// Workspaces are the workspaces of the Herdr session, in sidebar order,
-	// as the sync mapped them. WorkspacesRead is set when the sync read
-	// them; without it, the rail keeps the workspaces it knew.
+	// mapped as a sync maps them. WorkspacesRead is set when the refresh
+	// read them; without it, as when the snapshot failed, the rail keeps the
+	// workspaces it knew.
 	Workspaces     []Workspace
 	WorkspacesRead bool
 }

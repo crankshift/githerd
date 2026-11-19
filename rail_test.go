@@ -119,6 +119,61 @@ func TestRailShowsStaleReposBeforeTheSyncEnds(t *testing.T) {
 	}
 }
 
+// Opening the rail moves the focus, which fires workspace.focused, so the
+// hook's sync often holds the lock when the rail's first sync starts. The
+// rail's sync then doesn't run, but the rail still reads the snapshot,
+// which takes no lock, so its lines name the workspaces and o can focus
+// them at once.
+func TestRailMapsTheWorkspacesWhileAHookSyncHoldsTheLock(t *testing.T) {
+	t.Parallel()
+	f := gitfixture.New(t)
+	work := f.EveryState()
+	api := filepath.Join(work, gitfixture.UncommittedRepo)
+	h := newFakeHerdr(t, f)
+	h.roots(work + "\n")
+	h.snapshot(at("w1", work), at("w2", api))
+	release := h.hold()
+	hook := h.startSync("HERDR_PLUGIN_EVENT=workspace.focused")
+	h.waitForCalls(1) // the hook's sync holds the lock, waiting on its snapshot
+	term := newPTY(t, 60, 20)
+
+	exited := h.startRail(term, api)
+	h.waitForSnapshots(2) // the rail's, waiting too
+	release()
+	term.waitFor(0, "⧉ws-w2")
+	if got := hook(); got.code != 0 || got.stderr != "" {
+		t.Errorf("the hook's sync: want exit 0 and no output; got %+v", got)
+	}
+	h.calls()
+
+	term.typed("o")
+	h.expectCalls("o on api", []string{"workspace", "focus", "w2"})
+	term.typed("q")
+	if err := <-exited; err != nil {
+		t.Fatalf("the rail exited with %v", err)
+	}
+}
+
+// waitForSnapshots waits until herdr was asked for the snapshot n times
+// since the last calls, and fails the test if that takes over 10 seconds.
+func (h *fakeHerdr) waitForSnapshots(n int) {
+	h.t.Helper()
+	snapshots := func() int {
+		got := 0
+		for _, c := range h.peekCalls() {
+			if slices.Equal(c, []string{"api", "snapshot"}) {
+				got++
+			}
+		}
+		return got
+	}
+	for deadline := time.Now().Add(10 * time.Second); snapshots() < n; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("waited 10s for %d snapshots; herdr calls %q", n, h.peekCalls())
+		}
+	}
+}
+
 // startRail starts githerd rail on term as Herdr runs it in the pane it
 // opened, as w1:p9, split from a pane whose cwd is cwd, with extra env added.
 // The channel gets the rail's exit.
