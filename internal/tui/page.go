@@ -111,7 +111,7 @@ func (p page) move(n int) page {
 		return p
 	}
 	p.cursor = min(max(p.cursor+n, 0), len(entries)-1)
-	p.sel, p.scroll = entries[p.cursor].item, 0
+	p.sel, p.scroll = entries[p.cursor].item(), 0
 	return p
 }
 
@@ -126,12 +126,12 @@ func (m Model) pageLoaded(msg PageLoaded) Model {
 	entries := p.entries()
 	p.cursor = min(p.cursor, max(len(entries)-1, 0))
 	for i, e := range entries {
-		if e.item == p.sel {
+		if e.item() == p.sel {
 			p.cursor = i
 		}
 	}
 	if len(entries) > 0 {
-		p.sel = entries[p.cursor].item
+		p.sel = entries[p.cursor].item()
 	}
 	m.page = p
 	return m
@@ -173,7 +173,7 @@ func (m Model) askDetail() (Model, []Cmd) {
 	if !p.open() || len(entries) == 0 {
 		return m, nil
 	}
-	it := entries[p.cursor].item
+	it := entries[p.cursor].item()
 	if d, ok := p.details[it]; (ok && d.gen == p.gen) || p.asked[it] == p.gen {
 		return m, nil
 	}
@@ -221,31 +221,11 @@ func (m Model) settlePage() Model {
 	return m
 }
 
-// entryKind is the section an entry is listed in.
-type entryKind uint8
-
-const (
-	changeEntry entryKind = iota + 1
-	pushEntry
-	pullEntry
-	branchEntry
-	logEntry
-)
-
-// entry is a line of the page with something to show beside it.
-type entry struct {
-	kind   entryKind
-	item   repopage.Item
-	change repopage.Change
-	commit repopage.Commit
-	branch repopage.Branch
-}
-
 // row is one line of the page's list: a section's heading, a note such as
 // "nothing to push", or an entry.
 type row struct {
 	text  []Span
-	entry *entry
+	entry entry
 }
 
 // rows returns the lines of the page's list: Changes, To push, To pull,
@@ -258,20 +238,20 @@ func (p page) rows() []row {
 	note := func(text string) {
 		rows = append(rows, row{text: []Span{{Text: "  " + text, Style: Style{Dim: true}}}})
 	}
-	add := func(e entry) { rows = append(rows, row{entry: &e}) }
+	add := func(e entry) { rows = append(rows, row{entry: e}) }
 	d := p.data
 
 	heading(fmt.Sprintf("Changes %d", changedFiles(d.Changes)), Yellow)
 	for _, c := range d.Changes {
-		add(entry{kind: changeEntry, item: repopage.Item{Change: c}, change: c})
+		add(changeEntry{c})
 	}
 	if len(d.Changes) == 0 {
 		note("nothing to commit")
 	}
 
-	commits := func(kind entryKind, cs []repopage.Commit, total int, none string) {
+	commits := func(in section, cs []repopage.Commit, total int, none string) {
 		for _, c := range cs {
-			add(entry{kind: kind, item: repopage.Item{Commit: c.Hash}, commit: c})
+			add(commitEntry{c, in})
 		}
 		if more := total - len(cs); more > 0 {
 			note(fmt.Sprintf("… %d more", more))
@@ -285,20 +265,20 @@ func (p page) rows() []row {
 		push = "Local commits"
 	}
 	heading(fmt.Sprintf("%s %d", push, d.Ahead), Cyan)
-	commits(pushEntry, d.ToPush, d.Ahead, "nothing to push")
+	commits(toPush, d.ToPush, d.Ahead, "nothing to push")
 	heading(fmt.Sprintf("To pull %d", d.Behind), Magenta)
-	commits(pullEntry, d.ToPull, d.Behind, "nothing to pull")
+	commits(toPull, d.ToPull, d.Behind, "nothing to pull")
 
 	heading(fmt.Sprintf("Branches %d", len(d.Branches)), Blue)
 	for _, b := range d.Branches {
-		add(entry{kind: branchEntry, item: repopage.Item{Branch: b.Ref}, branch: b})
+		add(branchEntry{b})
 	}
 	if len(d.Branches) == 0 {
 		note("no branches")
 	}
 
 	heading("Log", Default)
-	commits(logEntry, d.Log, len(d.Log), "no commits yet")
+	commits(inLog, d.Log, len(d.Log), "no commits yet")
 	return rows
 }
 
@@ -320,7 +300,7 @@ func (p page) entries() []entry {
 	var out []entry
 	for _, r := range p.rows() {
 		if r.entry != nil {
-			out = append(out, *r.entry)
+			out = append(out, r.entry)
 		}
 	}
 	return out
@@ -406,70 +386,12 @@ func rowSpans(r row, selected bool, w int, now time.Time) []Span {
 	if r.entry == nil {
 		return fit(r.text, w)
 	}
-	var left, right []Span
-	e := r.entry
-	switch e.kind {
-	case changeEntry:
-		c := e.change
-		path := c.Path
-		if c.Orig != "" {
-			path = c.Orig + " → " + c.Path
-		}
-		left = []Span{{Text: "  "}, {Text: c.Code, Style: Style{Color: areaColor[c.Area]}}, {Text: " " + cutPath(path, w-5)}}
-	case branchEntry:
-		b := e.branch
-		mark, name := Span{Text: "    "}, Style{}
-		switch {
-		case b.Current:
-			mark, name = Span{Text: "  * ", Style: Style{Color: Green}}, Style{Color: Green, Bold: true}
-		case b.Remote:
-			name = Style{Dim: true}
-		}
-		left, right = []Span{mark, {Text: b.Name, Style: name}}, tracking(b)
-	default:
-		c := e.commit
-		left = []Span{{Text: "  "}, {Text: c.Short, Style: Style{Color: commitColor[e.kind]}}, {Text: " " + c.Subject}}
-		right = []Span{{Text: age(now.Sub(c.When)), Style: Style{Dim: true}}}
-	}
+	left, right := r.entry.row(w, now)
 	spans := leftRight(left, right, w)
 	if selected {
 		return []Span{{Text: spansText(spans), Style: Style{Reverse: true}}}
 	}
 	return spans
-}
-
-// areaColor is the color of a change's code: green when staged, yellow
-// when unstaged, red when untracked or unmerged.
-var areaColor = map[repopage.Area]Color{repopage.Staged: Green, repopage.Unstaged: Yellow, repopage.Untracked: Red, repopage.Unmerged: Red}
-
-// commitColor is the color of a commit's hash: cyan to push, magenta to
-// pull, yellow in the log.
-var commitColor = map[entryKind]Color{pushEntry: Cyan, pullEntry: Magenta, logEntry: Yellow}
-
-// tracking is a branch's state against its upstream: ⇡N ahead and ⇣N
-// behind, = level with it, or why it has none to compare with.
-func tracking(b repopage.Branch) []Span {
-	switch {
-	case b.Remote:
-		return []Span{{Text: "remote", Style: Style{Dim: true}}}
-	case b.Gone:
-		return []Span{{Text: "gone", Style: Style{Color: Red}}}
-	case b.Upstream == "":
-		return []Span{{Text: "∅ no upstream", Style: Style{Color: Red}}}
-	case b.Ahead == 0 && b.Behind == 0:
-		return []Span{{Text: "=", Style: Style{Color: Green}}}
-	}
-	var out []Span
-	if b.Ahead > 0 {
-		out = append(out, Span{Text: fmt.Sprintf("⇡%d", b.Ahead), Style: Style{Color: Cyan}})
-	}
-	if b.Behind > 0 {
-		if len(out) > 0 {
-			out = append(out, Span{Text: " "})
-		}
-		out = append(out, Span{Text: fmt.Sprintf("⇣%d", b.Behind), Style: Style{Color: Magenta}})
-	}
-	return out
 }
 
 // ago says how long ago d was: "just now", or such as "4m ago".
@@ -509,71 +431,9 @@ func (p page) detailLines(w int, now time.Time) [][]Span {
 		return nil
 	}
 	e := entries[p.cursor]
-	d, ok := p.details[e.item]
-	var out [][]Span
+	d, ok := p.details[e.item()]
+	out := e.head(d, ok, w, now)
 	line := func(spans ...Span) { out = append(out, fit(spans, w)) }
-
-	switch e.kind {
-	case changeEntry:
-		c := e.change
-		var added, removed int
-		if ok && len(d.read.Files) > 0 {
-			for _, l := range d.read.Files[0].Lines {
-				switch l.Kind {
-				case repopage.Added:
-					added++
-				case repopage.Removed:
-					removed++
-				}
-			}
-		}
-		out = append(out, leftRight([]Span{{Text: c.Path, Style: Style{Bold: true}}},
-			[]Span{{Text: fmt.Sprintf("+%d", added), Style: Style{Color: Green}}, {Text: " "}, {Text: fmt.Sprintf("−%d", removed), Style: Style{Color: Red}}}, w))
-		side := areaName[c.Area]
-		if c.Orig != "" {
-			side += " · renamed from " + c.Orig
-		}
-		line(Span{Text: side, Style: Style{Dim: true}})
-	case branchEntry:
-		b := e.branch
-		name := Style{Bold: true}
-		if b.Current {
-			name.Color = Green
-		}
-		line(Span{Text: "branch ", Style: Style{Dim: true}}, Span{Text: b.Name, Style: name})
-		switch {
-		case b.Remote:
-			line(Span{Text: "remote branch: no local branch tracks it", Style: Style{Dim: true}})
-		case b.Gone:
-			line(Span{Text: "tracks " + b.Upstream + ", which is gone", Style: Style{Color: Red}})
-		case b.Upstream == "":
-			line(Span{Text: "no upstream", Style: Style{Color: Red}})
-		default:
-			state := tracking(b)
-			if b.Ahead == 0 && b.Behind == 0 {
-				state = []Span{{Text: "up to date", Style: Style{Color: Green}}}
-			}
-			line(append([]Span{{Text: "tracks ", Style: Style{Dim: true}}, {Text: b.Upstream}, {Text: "  "}}, state...)...)
-		}
-		line()
-		line(Span{Text: "Recent commits", Style: Style{Dim: true, Bold: true}})
-	default:
-		c := e.commit
-		line(Span{Text: "commit ", Style: Style{Dim: true}}, Span{Text: c.Hash, Style: Style{Color: Yellow}})
-		when := []Span{{Text: c.Author + " · " + ago(now.Sub(c.When)), Style: Style{Dim: true}}}
-		switch e.kind {
-		case pushEntry:
-			when = append(when, Span{Text: " · "}, Span{Text: "not pushed", Style: Style{Color: Cyan}})
-		case pullEntry:
-			when = append(when, Span{Text: " · "}, Span{Text: "not pulled", Style: Style{Color: Magenta}})
-		}
-		line(when...)
-		line()
-		if !ok || d.err != "" {
-			line(Span{Text: "    " + c.Subject})
-			line()
-		}
-	}
 
 	switch {
 	case !ok:
@@ -593,7 +453,7 @@ func (p page) detailLines(w int, now time.Time) [][]Span {
 				[]Span{{Text: c.Author + " " + age(now.Sub(c.When)), Style: Style{Dim: true}}}, w))
 		}
 		for _, f := range d.read.Files {
-			if e.kind != changeEntry {
+			if e.titled() {
 				name := f.Path
 				if f.Orig != "" {
 					name = f.Orig + " → " + f.Path
@@ -606,9 +466,6 @@ func (p page) detailLines(w int, now time.Time) [][]Span {
 	}
 	return out
 }
-
-// areaName names the side of the repo a change is on.
-var areaName = map[repopage.Area]string{repopage.Staged: "staged", repopage.Unstaged: "unstaged", repopage.Untracked: "untracked", repopage.Unmerged: "unmerged"}
 
 // gutterWidth is how wide the view beside the list must be for diff lines
 // to show their old and new line numbers.
