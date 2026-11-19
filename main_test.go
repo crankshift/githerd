@@ -14,6 +14,9 @@ import (
 var githerdBin string
 
 func TestMain(m *testing.M) {
+	if dir := os.Getenv(fakeHerdrDirEnv); dir != "" {
+		os.Exit(runFakeHerdr(dir, os.Args[1:])) // re-executed as the fake herdr
+	}
 	os.Exit(buildAndRun(m))
 }
 

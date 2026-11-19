@@ -1,0 +1,317 @@
+package main_test
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/crankshift/githerd/internal/gitfixture"
+)
+
+// fakeHerdrDirEnv names the dir of a fake herdr. The test binary, run with
+// it set, acts as herdr instead of running tests: githerd reaches it through
+// HERDR_BIN_PATH and never talks to a real Herdr.
+const fakeHerdrDirEnv = "GITHERD_TEST_FAKE_HERDR"
+
+// Files in a fake herdr's dir.
+const (
+	fakeSnapshotFile = "snapshot.json" // the snapshot `api snapshot` serves; without it, herdr is not running
+	fakeCallsFile    = "calls.jsonl"   // one JSON array of argv per call
+	fakeHoldFile     = "hold"          // while it exists, `api snapshot` waits
+)
+
+// runFakeHerdr is the fake herdr. It records its argv, serves the canned
+// snapshot, and accepts every workspace report-metadata call silently, as
+// herdr does on success.
+func runFakeHerdr(dir string, args []string) int {
+	line, _ := json.Marshal(args)
+	calls, err := os.OpenFile(filepath.Join(dir, fakeCallsFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake herdr:", err)
+		return 1
+	}
+	_, err = calls.Write(append(line, '\n'))
+	calls.Close()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake herdr:", err)
+		return 1
+	}
+
+	switch {
+	case len(args) == 2 && args[0] == "api" && args[1] == "snapshot":
+		for deadline := time.Now().Add(10 * time.Second); exists(filepath.Join(dir, fakeHoldFile)); {
+			if time.Now().After(deadline) {
+				fmt.Fprintln(os.Stderr, "fake herdr: held for too long")
+				return 1
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		snap, err := os.ReadFile(filepath.Join(dir, fakeSnapshotFile))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, `{"id":"cli:api:snapshot","error":{"code":"server_not_running","message":"herdr server is not running"}}`)
+			return 1
+		}
+		fmt.Printf(`{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":%s}}`+"\n", bytes.TrimSpace(snap))
+		return 0
+	case len(args) > 2 && args[0] == "workspace" && args[1] == "report-metadata":
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "fake herdr: unexpected command %q\n", args)
+	return 2
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// fakeHerdr is a fake Herdr session for githerd herdr sync: the fake herdr
+// binary, the plugin's config and state dirs, and the session's snapshot.
+type fakeHerdr struct {
+	t   *testing.T
+	f   *gitfixture.Fixture
+	dir string
+}
+
+func newFakeHerdr(t *testing.T, f *gitfixture.Fixture) *fakeHerdr {
+	t.Helper()
+	h := &fakeHerdr{t: t, f: f, dir: f.Path("herdr")}
+	for _, dir := range []string{h.dir, h.configDir(), h.stateDir()} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return h
+}
+
+func (h *fakeHerdr) configDir() string { return h.f.Path("plugin-config") }
+func (h *fakeHerdr) stateDir() string  { return h.f.Path("plugin-state") }
+
+// env returns the fixture's environment plus what Herdr gives a plugin hook.
+func (h *fakeHerdr) env() []string {
+	h.t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return append(h.f.Env(),
+		fakeHerdrDirEnv+"="+h.dir,
+		"HERDR_BIN_PATH="+self,
+		"HERDR_ENV=1",
+		"HERDR_PLUGIN_ID=githerd",
+		"HERDR_PLUGIN_CONFIG_DIR="+h.configDir(),
+		"HERDR_PLUGIN_STATE_DIR="+h.stateDir(),
+	)
+}
+
+// roots writes the plugin's roots file.
+func (h *fakeHerdr) roots(content string) {
+	h.t.Helper()
+	if err := os.WriteFile(filepath.Join(h.configDir(), "roots"), []byte(content), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// sync runs githerd herdr sync as a Herdr hook would, with extra env added.
+func (h *fakeHerdr) sync(extra ...string) result {
+	h.t.Helper()
+	return githerd(h.t, append(h.env(), extra...), h.f.Path("."), "herdr", "sync")
+}
+
+// calls returns the argv of every herdr call made since the last calls, and
+// forgets them.
+func (h *fakeHerdr) calls() [][]string {
+	h.t.Helper()
+	path := filepath.Join(h.dir, fakeCallsFile)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		h.t.Fatal(err)
+	}
+	var calls [][]string
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		var argv []string
+		if err := json.Unmarshal(sc.Bytes(), &argv); err != nil {
+			h.t.Fatalf("fake herdr log: %v", err)
+		}
+		calls = append(calls, argv)
+	}
+	return calls
+}
+
+// workspace is one workspace of a fake snapshot.
+type workspace struct {
+	id     string
+	tabs   [][]pane          // the panes of each tab, in tab-bar and layout order
+	tokens map[string]string // tokens the sidebar shows for it now
+}
+
+type pane struct {
+	cwd           string
+	foregroundCwd string
+	focused       bool
+}
+
+// at returns a workspace with one tab holding one pane whose cwd is cwd.
+func at(id, cwd string) workspace {
+	return workspace{id: id, tabs: [][]pane{{{cwd: cwd}}}}
+}
+
+// snapshot sets the session `herdr api snapshot` serves, laid out the way
+// Herdr 0.9.5 lays it out: workspaces in sidebar order, then for each one its
+// tabs in tab-bar order, each tab's layout, and its panes in layout order.
+func (h *fakeHerdr) snapshot(workspaces ...workspace) {
+	h.t.Helper()
+	type obj = map[string]any
+	var wss, tabs, panes, layouts []obj
+	for i, w := range workspaces {
+		paneCount := 0
+		for ti, tabPanes := range w.tabs {
+			tabID := fmt.Sprintf("%s:t%d", w.id, ti+1)
+			tabs = append(tabs, obj{"tab_id": tabID, "workspace_id": w.id, "number": ti + 1, "label": "shell",
+				"focused": ti == 0, "pane_count": len(tabPanes), "agent_status": "idle"})
+			var layoutPanes []obj
+			for _, p := range tabPanes {
+				paneCount++
+				paneID := fmt.Sprintf("%s:p%d", w.id, paneCount)
+				info := obj{"pane_id": paneID, "terminal_id": "term-" + paneID, "workspace_id": w.id, "tab_id": tabID,
+					"focused": p.focused, "agent_status": "unknown", "revision": 1}
+				if p.cwd != "" {
+					info["cwd"] = p.cwd
+				}
+				if p.foregroundCwd != "" {
+					info["foreground_cwd"] = p.foregroundCwd
+				}
+				panes = append(panes, info)
+				layoutPanes = append(layoutPanes, obj{"pane_id": paneID, "focused": p.focused,
+					"rect": obj{"x": 0, "y": 0, "width": 80, "height": 24}})
+			}
+			layouts = append(layouts, obj{"workspace_id": w.id, "tab_id": tabID, "zoomed": false,
+				"area": obj{"x": 0, "y": 0, "width": 80, "height": 24}, "panes": layoutPanes, "splits": []obj{}})
+		}
+		info := obj{"workspace_id": w.id, "number": i + 1, "label": "ws-" + w.id, "focused": i == 0,
+			"pane_count": paneCount, "tab_count": len(w.tabs), "active_tab_id": w.id + ":t1", "agent_status": "idle"}
+		if len(w.tokens) > 0 {
+			info["tokens"] = w.tokens
+		}
+		wss = append(wss, info)
+	}
+	snap, err := json.Marshal(obj{"version": "0.9.5", "protocol": 22,
+		"workspaces": wss, "tabs": tabs, "panes": panes, "layouts": layouts, "agents": []obj{}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.dir, fakeSnapshotFile), snap, 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// cleared stands for a token that a report clears with --clear-token.
+const cleared = "(cleared)"
+
+// tokens are the token changes of one report: name to value, or cleared.
+type tokens map[string]string
+
+// report is one workspace report-metadata call.
+type report struct {
+	workspace string
+	seq       uint64
+	tokens    tokens
+}
+
+// reports returns the workspace report-metadata calls among calls, in call
+// order. It fails the test unless each is one githerd would make: source
+// githerd, a numeric --seq, no --ttl-ms, and only known flags.
+func reports(t *testing.T, calls [][]string) []report {
+	t.Helper()
+	var reps []report
+	for _, argv := range calls {
+		if len(argv) < 2 || argv[0] != "workspace" || argv[1] != "report-metadata" {
+			continue
+		}
+		if len(argv) < 3 || strings.HasPrefix(argv[2], "-") {
+			t.Fatalf("report without a workspace id: %q", argv)
+		}
+		rep := report{workspace: argv[2], tokens: tokens{}}
+		source, haveSeq := "", false
+		flags := argv[3:]
+		for i := 0; i < len(flags); i += 2 {
+			if i+1 >= len(flags) {
+				t.Fatalf("flag %s without a value: %q", flags[i], argv)
+			}
+			value := flags[i+1]
+			switch flags[i] {
+			case "--source":
+				source = value
+			case "--seq":
+				seq, err := strconv.ParseUint(value, 10, 64)
+				if err != nil {
+					t.Fatalf("--seq %q is not a u64: %q", value, argv)
+				}
+				rep.seq, haveSeq = seq, true
+			case "--token":
+				name, v, ok := strings.Cut(value, "=")
+				if !ok {
+					t.Fatalf("--token %q has no '=': %q", value, argv)
+				}
+				rep.tokens[name] = v
+			case "--clear-token":
+				rep.tokens[value] = cleared
+			default:
+				t.Fatalf("unexpected flag %s: %q", flags[i], argv)
+			}
+		}
+		if source != "githerd" || !haveSeq || len(rep.tokens) == 0 {
+			t.Fatalf("want --source githerd, a --seq and a token in %q", argv)
+		}
+		reps = append(reps, rep)
+	}
+	return reps
+}
+
+// tokensByWorkspace returns the tokens of each report by workspace id. It
+// fails the test if a workspace got more than one report.
+func tokensByWorkspace(t *testing.T, calls [][]string) map[string]tokens {
+	t.Helper()
+	byID := map[string]tokens{}
+	for _, rep := range reports(t, calls) {
+		if _, dup := byID[rep.workspace]; dup {
+			t.Fatalf("workspace %s got more than one report: %q", rep.workspace, calls)
+		}
+		byID[rep.workspace] = rep.tokens
+	}
+	return byID
+}
+
+// assertSynced fails unless the sync exited 0 with no output and reported
+// exactly want.
+func (h *fakeHerdr) assertSynced(got result, want map[string]tokens) {
+	h.t.Helper()
+	if got.code != 0 || got.stdout != "" || got.stderr != "" {
+		h.t.Fatalf("want exit 0 and no output; got %+v", got)
+	}
+	assertTokens(h.t, tokensByWorkspace(h.t, h.calls()), want)
+}
+
+func assertTokens(t *testing.T, got, want map[string]tokens) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reports by workspace:\n got %v\nwant %v", got, want)
+	}
+}

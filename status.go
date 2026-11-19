@@ -9,7 +9,6 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -17,9 +16,6 @@ import (
 	"github.com/crankshift/githerd/internal/fetch"
 	"github.com/crankshift/githerd/internal/status"
 )
-
-// readWorkers bounds how many repos are read with git at once.
-const readWorkers = 8
 
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
@@ -79,7 +75,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			}
 		}
 	}
-	repos, errs := readAll(ctx, dirs)
+	repos, errs := status.ReadAll(ctx, dirs)
 	for _, err := range errs {
 		fmt.Fprintln(stderr, "githerd:", err)
 	}
@@ -135,36 +131,6 @@ func setFlag(fs *flag.FlagSet, names ...string) string {
 		}
 	}
 	return ""
-}
-
-// readAll reads every repo in parallel and keeps the order of dirs. Repos
-// that could not be read are left out and their errors returned.
-func readAll(ctx context.Context, dirs []string) ([]status.Repo, []error) {
-	repos := make([]status.Repo, len(dirs))
-	errs := make([]error, len(dirs))
-	sem := make(chan struct{}, readWorkers)
-	var wg sync.WaitGroup
-	for i, dir := range dirs {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			repos[i], errs[i] = status.Read(ctx, dir)
-		}()
-	}
-	wg.Wait()
-
-	var ok []status.Repo
-	var failed []error
-	for i := range dirs {
-		if errs[i] != nil {
-			failed = append(failed, errs[i])
-			continue
-		}
-		ok = append(ok, repos[i])
-	}
-	return ok, failed
 }
 
 func printTable(w io.Writer, root string, repos []status.Repo, stale map[string]fetch.Outcome) {

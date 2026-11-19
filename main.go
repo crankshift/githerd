@@ -17,6 +17,9 @@ Commands:
       print the state of every repo under root (default: .); with --fetch,
       fetch each repo's upstream remote first, skipping repos fetched within
       the TTL (default 15m) unless --force is given
+  herdr sync
+      from a Herdr hook: refresh the repos under the roots listed in
+      $HERDR_PLUGIN_CONFIG_DIR/roots and report them to Herdr's sidebar
 `
 
 func main() {
@@ -34,6 +37,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "status":
 		return runStatus(ctx, args[1:], stdout, stderr)
+	case "herdr":
+		return runHerdr(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
