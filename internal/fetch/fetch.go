@@ -57,7 +57,7 @@ func Run(ctx context.Context, dirs []string, opts Options) []Outcome {
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultTimeout
 	}
-	return each(dirs, func(dir string) Outcome { return one(ctx, dir, opts) })
+	return each(dirs, func(dir string) Outcome { return fetchRepo(ctx, dir, opts) })
 }
 
 // Last returns, without fetching anything, the outcome Run would give each
@@ -92,10 +92,12 @@ func each(dirs []string, do func(dir string) Outcome) []Outcome {
 	return outcomes
 }
 
-func one(ctx context.Context, dir string, opts Options) Outcome {
+// fetchRepo fetches the repo in dir if it is due, giving up after
+// opts.Timeout.
+func fetchRepo(ctx context.Context, dir string, opts Options) Outcome {
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	o := fetchOne(ctx, dir, opts)
+	o := fetchIfDue(ctx, dir, opts)
 	if o.Err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		o.Err = fmt.Errorf("timed out after %v", opts.Timeout)
 	}
@@ -118,7 +120,9 @@ func lastFetch(ctx context.Context, dir string) (o Outcome, at time.Time, err er
 	return o, at, err
 }
 
-func fetchOne(ctx context.Context, dir string, opts Options) Outcome {
+// fetchIfDue fetches the repo in dir unless it has nothing to fetch, or
+// was fetched less than opts.TTL ago and opts.Force is not set.
+func fetchIfDue(ctx context.Context, dir string, opts Options) Outcome {
 	o, last, err := lastFetch(ctx, dir)
 	switch {
 	case err != nil:

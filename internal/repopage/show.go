@@ -120,7 +120,7 @@ func changeDiff(ctx context.Context, dir string, c Change) (Detail, error) {
 		return Detail{Files: []FileDiff{{Path: c.Path, Lines: []DiffLine{{Kind: Meta, Text: "a repo of its own"}}}}}, nil
 	}
 	args := []string{"diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"}
-	differ := false // git diff --no-index exits 1 when the files differ
+	exit1OK := false
 	switch c.Area {
 	case Staged:
 		args = append(args, "--cached", "-M", "--", c.Path)
@@ -128,11 +128,11 @@ func changeDiff(ctx context.Context, dir string, c Change) (Detail, error) {
 			args = append(args, c.Orig)
 		}
 	case Untracked:
-		args, differ = append(args, "--no-index", "--", "/dev/null", c.Path), true
+		args, exit1OK = append(args, "--no-index", "--", "/dev/null", c.Path), true // git diff --no-index exits 1 when the files differ
 	default:
 		args = append(args, "--", c.Path)
 	}
-	lines, cut, err := gitLines(ctx, dir, differ, args...)
+	lines, cut, err := gitLines(ctx, dir, exit1OK, args...)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -151,9 +151,9 @@ var cutLine = DiffLine{Kind: Meta, Text: fmt.Sprintf("… cut after %d lines", m
 
 // gitLines runs git in dir as git does, and returns the lines it prints, at
 // most maxLines of them, each cut to maxLineBytes, and whether it printed
-// more. It stops git once it has enough. With differ, exit status 1 is not
-// an error.
-func gitLines(ctx context.Context, dir string, differ bool, args ...string) (lines []string, cut bool, err error) {
+// more. It stops git once it has enough. With exit1OK, exit status 1 is not
+// an error, as `git diff --no-index` exits 1 when the files differ.
+func gitLines(ctx context.Context, dir string, exit1OK bool, args ...string) (lines []string, cut bool, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks"}, args...)...)
@@ -186,7 +186,7 @@ func gitLines(ctx context.Context, dir string, differ bool, args ...string) (lin
 	err = cmd.Wait()
 	var exit *exec.ExitError
 	switch {
-	case cut, err == nil, differ && errors.As(err, &exit) && exit.ExitCode() == 1:
+	case cut, err == nil, exit1OK && errors.As(err, &exit) && exit.ExitCode() == 1:
 		return lines, cut, nil
 	}
 	msg := strings.TrimSpace(stderr.String())

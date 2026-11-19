@@ -57,11 +57,12 @@ type page struct {
 	asked   map[repopage.Item]int    // the gen at which each item's detail was last asked for
 }
 
-// detail is what was read beside an item, during gen.
+// detail is what was read beside an item, during gen, or why it could not
+// be.
 type detail struct {
-	gen int
-	d   repopage.Detail
-	err string
+	gen  int
+	read repopage.Detail
+	err  string
 }
 
 // open reports whether the repo page is showing.
@@ -165,7 +166,7 @@ func (m Model) detailLoaded(msg DetailLoaded) Model {
 	if p.details == nil {
 		p.details = map[repopage.Item]detail{}
 	}
-	p.details[msg.Item] = detail{gen: p.asked[msg.Item], d: msg.Detail, err: msg.Err}
+	p.details[msg.Item] = detail{gen: p.asked[msg.Item], read: msg.Detail, err: msg.Err}
 	m.page = p
 	return m
 }
@@ -518,8 +519,8 @@ func (p page) detailLines(w int, now time.Time) [][]Span {
 	case changeEntry:
 		c := e.change
 		var added, removed int
-		if ok && len(d.d.Files) > 0 {
-			for _, l := range d.d.Files[0].Lines {
+		if ok && len(d.read.Files) > 0 {
+			for _, l := range d.read.Files[0].Lines {
 				switch l.Kind {
 				case repopage.Added:
 					added++
@@ -582,18 +583,18 @@ func (p page) detailLines(w int, now time.Time) [][]Span {
 	case d.err != "":
 		line(Span{Text: "⚠ " + d.err, Style: Style{Color: Red}})
 	default:
-		if d.d.Message != "" {
-			for _, text := range strings.Split(d.d.Message, "\n") {
+		if d.read.Message != "" {
+			for _, text := range strings.Split(d.read.Message, "\n") {
 				line(Span{Text: "    " + text})
 			}
 			line()
 		}
-		for _, c := range d.d.Commits {
+		for _, c := range d.read.Commits {
 			out = append(out, leftRight(
 				[]Span{{Text: "  "}, {Text: c.Short, Style: Style{Color: Yellow}}, {Text: " " + c.Subject}},
 				[]Span{{Text: c.Author + " " + age(now.Sub(c.When)), Style: Style{Dim: true}}}, w))
 		}
-		for _, f := range d.d.Files {
+		for _, f := range d.read.Files {
 			if e.kind != changeEntry {
 				name := f.Path
 				if f.Orig != "" {
