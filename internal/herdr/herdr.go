@@ -12,10 +12,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/crankshift/githerd/internal/discovery"
 	"github.com/crankshift/githerd/internal/fetch"
+	"github.com/crankshift/githerd/internal/paths"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -331,8 +331,12 @@ func scanRoots(ctx context.Context, configDir string) ([]Root, []string, []error
 }
 
 // canonical returns path cleaned and with symlinks resolved, or only
-// cleaned when it cannot be resolved, such as a cwd that was removed.
+// cleaned when it cannot be resolved, such as a cwd that was removed. An
+// empty path stays empty.
 func canonical(path string) string {
+	if path == "" {
+		return ""
+	}
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved
 	}
@@ -347,32 +351,15 @@ func locate(roots []Root, cwd string) (*Root, *status.Repo) {
 		return nil, nil
 	}
 	cwd = canonical(cwd)
-	var root *Root
-	for i := range roots {
-		if within(cwd, roots[i].Dir) && (root == nil || len(roots[i].Dir) > len(root.Dir)) {
-			root = &roots[i]
-		}
-	}
-	if root == nil {
+	i := paths.Deepest(cwd, roots, func(r Root) string { return r.Dir })
+	if i < 0 {
 		return nil, nil
 	}
-	var repo *status.Repo
-	for i := range root.Repos {
-		r := &root.Repos[i]
-		if r.Dir != root.Dir && within(cwd, r.Dir) && (repo == nil || len(r.Dir) > len(repo.Dir)) {
-			repo = r
-		}
+	root := &roots[i]
+	// The deepest repo is the root's own only when no nested repo holds cwd.
+	j := paths.Deepest(cwd, root.Repos, func(r status.Repo) string { return r.Dir })
+	if j < 0 || root.Repos[j].Dir == root.Dir {
+		return root, nil
 	}
-	return root, repo
-}
-
-// within reports whether path is dir or lies under it. Both are clean.
-func within(path, dir string) bool {
-	if path == dir {
-		return true
-	}
-	if !strings.HasSuffix(dir, string(filepath.Separator)) {
-		dir += string(filepath.Separator)
-	}
-	return strings.HasPrefix(path, dir)
+	return root, &root.Repos[j]
 }

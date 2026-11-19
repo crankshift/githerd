@@ -83,7 +83,7 @@ func (r *rail) run(ctx context.Context, pane, cwd string) {
 	_, lazygitErr := exec.LookPath("lazygit")
 	m, cmds := tui.New(tui.Options{
 		Now:       time.Now(),
-		Cwd:       canonical(cwd),
+		Cwd:       cwd,
 		RootsFile: tildePath(herdr.RootsFile(r.env.ConfigDir)),
 		Pane:      pane,
 		Lazygit:   lazygitErr == nil,
@@ -260,18 +260,6 @@ func loaded(res herdr.Result, errs ...error) tui.Loaded {
 		l.Workspaces = append(l.Workspaces, tui.Workspace{ID: w.ID, Label: w.Label, Root: w.Root, Repo: w.Repo})
 	}
 	return l
-}
-
-// canonical returns path cleaned and with symlinks resolved, or only
-// cleaned when it cannot be resolved.
-func canonical(path string) string {
-	if path == "" {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
 }
 
 // tildePath returns path with the home dir spelled ~.

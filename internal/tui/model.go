@@ -5,9 +5,9 @@
 package tui
 
 import (
-	"path/filepath"
 	"time"
 
+	"github.com/crankshift/githerd/internal/paths"
 	"github.com/crankshift/githerd/internal/status"
 )
 
@@ -310,29 +310,14 @@ func (m Model) shown() *Root {
 // pickRoot returns the index of the deepest root that contains cwd, or of
 // the first root when none does.
 func pickRoot(roots []Root, cwd string) int {
-	best := 0
-	for i, r := range roots {
-		if within(cwd, r.Dir) && (!within(cwd, roots[best].Dir) || len(r.Dir) > len(roots[best].Dir)) {
-			best = i
-		}
-	}
-	return best
+	return max(paths.Deepest(cwd, roots, func(r Root) string { return r.Dir }), 0)
 }
 
 // startRepo returns the Dir of the deepest repo of root that contains cwd,
 // the root's own repo included, or "" when none does.
 func startRepo(root Root, cwd string) string {
-	best := ""
-	for _, r := range root.Repos {
-		if within(cwd, r.Dir) && len(r.Dir) > len(best) {
-			best = r.Dir
-		}
+	if i := paths.Deepest(cwd, root.Repos, func(r Repo) string { return r.Dir }); i >= 0 {
+		return root.Repos[i].Dir
 	}
-	return best
-}
-
-// within reports whether path is dir or lies under it.
-func within(path, dir string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && (rel == "." || filepath.IsLocal(rel))
+	return ""
 }
