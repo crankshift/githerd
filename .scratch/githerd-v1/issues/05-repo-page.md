@@ -11,5 +11,6 @@
 - [ ] To push and To pull list commits; the selected commit shows its full diff
 - [ ] Branches: local branches with upstream ahead/behind or "no upstream", plus remote-only branches; the selected branch shows a summary and its recent commits
 - [ ] Log: recent commits of HEAD
+- [ ] `z` toggles zoom of the rail's own pane from the rail or the repo page (`pane zoom --pane <rail> --toggle`)
 - [ ] Diff lines show old and new line numbers when the width allows
 - [ ] Golden tests of `View` for a busy repo and a clean one; tests that Enter and Esc return the zoom commands
