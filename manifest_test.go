@@ -48,13 +48,18 @@ func TestPluginManifestRunsTheSyncOnStartupAndOnWorkspaceAndAgentEvents(t *testi
 }
 
 // A keybinding runs the rail action, githerd.rail, which opens the rail
-// pane as a split; the pane runs the rail itself.
-func TestPluginManifestDeclaresTheRailActionAndPane(t *testing.T) {
+// pane as a split; the pane runs the rail itself. The sync action,
+// githerd.sync, runs the sync as the hooks do, with the plugin's own binary,
+// state dir and lock, for a tab_bar_right entry to invoke.
+func TestPluginManifestDeclaresTheRailAndSyncActionsAndTheRailPane(t *testing.T) {
 	m := readManifest(t, "herdr-plugin.toml")
 
 	if got, want := m.tables["actions"], []map[string]any{{
 		"id": "rail", "title": "githerd rail", "contexts": []any{"workspace"},
 		"command": []any{"./bin/githerd", "herdr", "rail"},
+	}, {
+		"id": "sync", "title": "githerd sync", "contexts": []any{"global"},
+		"command": []any{"./bin/githerd", "herdr", "sync"},
 	}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("[[actions]]:\n got %v\nwant %v", got, want)
 	}

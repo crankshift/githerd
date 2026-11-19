@@ -46,6 +46,16 @@ title = "githerd rail"
 contexts = ["workspace"]
 command = ["./bin/githerd", "herdr", "rail"]
 
+# Runs the sync as the hooks do, with this plugin's binary, state dir and
+# lock. A tab_bar_right command entry in config.toml can invoke it as a
+# timer:
+#   "$HERDR_BIN_PATH" plugin action invoke githerd.sync >/dev/null
+[[actions]]
+id = "sync"
+title = "githerd sync"
+contexts = ["global"]
+command = ["./bin/githerd", "herdr", "sync"]
+
 # The rail: every repo under the root, refreshed every 30 seconds.
 [[panes]]
 id = "rail"

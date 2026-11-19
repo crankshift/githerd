@@ -180,13 +180,12 @@ Herdr gives plugins no timers. The sidebar refreshes when Herdr starts, when you
 ```toml
 [ui]
 tab_bar_right = [
-  { type = "command", command = 'HERDR_PLUGIN_CONFIG_DIR="$("$HERDR_BIN_PATH" plugin config-dir githerd)" HERDR_PLUGIN_STATE_DIR="$HOME/.cache/githerd-tab-bar" "$HOME/go/bin/githerd" herdr sync', interval_seconds = 300, timeout_seconds = 120 },
+  { type = "command", command = '"$HERDR_BIN_PATH" plugin action invoke githerd.sync >/dev/null', interval_seconds = 300, timeout_seconds = 10 },
 ]
 ```
 
-- **The binary.** This runs the `githerd` from `go install`, not the plugin's own build, so install it first and keep it at the plugin's version. Change `$HOME/go/bin` if `go env GOPATH` says otherwise.
-- **The state directory.** Herdr gives this command no `HERDR_PLUGIN_STATE_DIR`, so the entry keeps its own, and its sync doesn't share the plugin's lock. When the two sync at once, a repo one of them is fetching can show `⚠` until the next refresh.
-- **The tab bar.** The sync prints nothing, so the entry adds nothing to the tab bar.
+- **The sync.** The entry invokes the plugin's `sync` action, so the sync runs as the hooks run it: with the plugin's own build, state directory and lock.
+- **The tab bar.** `plugin action invoke` prints a record of the action it started, and `>/dev/null` keeps that out of the tab bar, so the entry adds nothing to it.
 
 ## Use
 

@@ -108,7 +108,7 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
   ]}
   ```
 
-- **Herdr adapter.** It runs as `githerd herdr sync`, from the startup hook, the event hooks and the rail.
+- **Herdr adapter.** It runs as `githerd herdr sync`, from the startup hook, the event hooks, the `sync` action and the rail.
   - It reads the roots file in the plugin config dir: one path per line, `~` expanded, blank lines and `#` comments ignored. A line may end in `depth=N`, the scan depth below that root (default 3), as in `~/work depth=5`; the sync and the rail both scan that deep. With no roots it reports nothing.
   - It maps workspaces through `herdr api snapshot`, using the cwd of the first pane listed for each workspace's first tab. The snapshot has no layout tree, so this stands in for Herdr's root pane; the two differ only when the user has moved panes in that tab.
     - a cwd inside a root but inside no nested repo makes a root workspace;
@@ -152,6 +152,7 @@ githerd is a command-line tool plus a Herdr plugin, written in Go with only the 
   - id `githerd`, `min_herdr_version` 0.9.5, platforms linux and macos;
   - `[[build]]` runs `go build`;
   - action `rail`: if the snapshot shows a pane in the current workspace carrying the rail's pane token, focus it. Otherwise open the rail pane as a split with `--target-pane` set to the focused pane, then narrow it with `pane resize --direction right --amount 0.25`. The amount is a ratio delta, so the rail ends up about a quarter of the width. After a Herdr restart the old rail comes back as a plain shell without the token, so the action opens a fresh one;
+  - action `sync`: runs the sync, as the hooks do, for an optional `tab_bar_right` entry, `"$HERDR_BIN_PATH" plugin action invoke githerd.sync >/dev/null`, which then runs with the plugin's own binary, state dir and lock;
   - pane `rail`;
   - `[[startup]]` and `[[events]]` (`workspace.created`, `workspace.closed`, `workspace.focused`, `pane.agent_status_changed`) all run the sync.
 - **Module path:** `github.com/crankshift/githerd`. The CLI installs with `go install`.
