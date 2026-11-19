@@ -14,6 +14,10 @@ const DefaultDepth = 3
 
 // Repos returns the repos under root, at most depth directory levels below
 // it, as absolute paths in path order. The root comes first when it is a repo.
+//
+// A repo is a directory that contains .git, either a directory or a file. The
+// scan descends into repos, so nested repos are found. It skips hidden
+// directories and node_modules, and does not follow symlinked directories.
 func Repos(root string, depth int) ([]string, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

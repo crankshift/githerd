@@ -25,7 +25,8 @@ func buildAndRun(m *testing.M) int {
 	}
 	defer os.RemoveAll(dir)
 	githerdBin = filepath.Join(dir, "githerd")
-	build := exec.Command("go", "build", "-o", githerdBin, ".")
+	// No VCS stamping: it would run git with the user's own config.
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", githerdBin, ".")
 	build.Stdout, build.Stderr = os.Stderr, os.Stderr
 	if err := build.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "building githerd:", err)
@@ -40,12 +41,13 @@ type result struct {
 	code           int
 }
 
-// githerd runs the built binary in dir with env and args.
+// githerd runs the built binary in dir with env and args. Like a shell, it
+// sets PWD to dir.
 func githerd(t *testing.T, env []string, dir string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(githerdBin, args...)
 	cmd.Dir = dir
-	cmd.Env = env
+	cmd.Env = append(append([]string(nil), env...), "PWD="+dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

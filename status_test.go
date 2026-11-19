@@ -5,85 +5,46 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/crankshift/githerd/internal/gitfixture"
 )
 
-func TestStatusListsACleanRepo(t *testing.T) {
+// One table covers the state rules: untracked files count as uncommitted;
+// ahead and behind come from the upstream; with no upstream, ahead counts the
+// commits on no remote branch; detached alone does not need attention.
+func TestStatusReportsEveryRepoStateSortedByPath(t *testing.T) {
 	f := gitfixture.New(t)
-	f.Clone(f.Remote("docs"), "work/repos/acme/docs")
+	root := f.EveryState()
+	pinned := f.Git(filepath.Join(root, gitfixture.DetachedRepo), "rev-parse", "--short", "HEAD")
 
-	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("work"))
+	got := githerd(t, f.Env(), f.Path("."), "status", root)
 
 	assertOutput(t, got, ""+
-		"REPO             BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
-		"repos/acme/docs  main    0            0      0       origin/main\n"+
-		"0 of 1 repos need attention\n")
+		"REPO                      BRANCH        UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
+		".                         main          0            0      0       origin/main\n"+
+		"repos/acme/api            main          3            0      0       origin/main\n"+
+		"repos/acme/billing        main          0            2      0       origin/main\n"+
+		"repos/acme/docs           main          0            0      0       origin/main\n"+
+		"repos/acme/mobile         main          0            1      2       origin/main\n"+
+		"repos/acme/web            main          0            0      4       origin/main\n"+
+		"repos/tools/cli           spike/parser  0            3      0       -            no upstream\n"+
+		"repos/tools/lint-rules    "+pinned+"       0            0      0       -            detached\n"+
+		"sandbox/experiments       main          0            2      0       -            no upstream\n"+
+		"sandbox/experiments/data  main          0            0      0       origin/main\n"+
+		"6 of 10 repos need attention\n")
 }
 
-func TestStatusCountsModifiedAndUntrackedFilesAsUncommitted(t *testing.T) {
+func TestStatusTreatsARepoWithNoCommitsYetAsNoUpstream(t *testing.T) {
 	f := gitfixture.New(t)
-	api := f.Clone(f.Remote("api"), "work/repos/acme/api")
-	f.Write(api, "README.md", "# api, edited\n")
-	f.Write(api, "src/auth.go", "package auth\n")
-	f.Write(api, "src/auth_test.go", "package auth\n")
+	f.Init("work/sandbox/blank")
 
-	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("work"))
-
-	assertOutput(t, got, ""+
-		"REPO            BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
-		"repos/acme/api  main    3            0      0       origin/main\n"+
+	assertOutput(t, githerd(t, f.Env(), f.Path("work"), "status"), ""+
+		"REPO           BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM  NOTE\n"+
+		"sandbox/blank  main    0            0      0       -         no upstream\n"+
 		"1 of 1 repos need attention\n")
-}
-
-func TestStatusCountsCommitsAheadAndBehindTheUpstream(t *testing.T) {
-	f := gitfixture.New(t)
-	billingRemote, mobileRemote, webRemote := f.Remote("billing"), f.Remote("mobile"), f.Remote("web")
-
-	billing := f.Clone(billingRemote, "work/repos/acme/billing")
-	f.Commit(billing, "invoice.go", "package billing\n", "Add invoices")
-	f.Commit(billing, "refund.go", "package billing\n", "Add refunds")
-
-	mobile := f.Clone(mobileRemote, "work/repos/acme/mobile")
-	f.Commit(mobile, "crash.go", "package mobile\n", "Fix crash on resume")
-	f.PushElsewhere(mobileRemote, "main", 2)
-	f.Git(mobile, "fetch", "--quiet")
-
-	web := f.Clone(webRemote, "work/repos/acme/web")
-	f.PushElsewhere(webRemote, "main", 4)
-	f.Git(web, "fetch", "--quiet")
-
-	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("work"))
-
-	assertOutput(t, got, ""+
-		"REPO                BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n"+
-		"repos/acme/billing  main    0            2      0       origin/main\n"+
-		"repos/acme/mobile   main    0            1      2       origin/main\n"+
-		"repos/acme/web      main    0            0      4       origin/main\n"+
-		"3 of 3 repos need attention\n")
-}
-
-func TestStatusCountsCommitsOnNoRemoteBranchWhenThereIsNoUpstream(t *testing.T) {
-	f := gitfixture.New(t)
-	cli := f.Clone(f.Remote("cli"), "work/repos/tools/cli")
-	f.Git(cli, "switch", "--quiet", "--create", "spike/parser")
-	f.Commit(cli, "lexer.go", "package cli\n", "WIP tokenizer")
-	f.Commit(cli, "flags.go", "package cli\n", "Parse flags")
-	f.Commit(cli, "ast.go", "package cli\n", "Spike: AST printer")
-
-	experiments := f.Init("work/sandbox/experiments")
-	f.Commit(experiments, "notes.md", "ideas\n", "Start notes")
-	f.Commit(experiments, "plot.py", "print()\n", "Add plot")
-
-	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("work"))
-
-	assertOutput(t, got, ""+
-		"REPO                 BRANCH        UNCOMMITTED  AHEAD  BEHIND  UPSTREAM  NOTE\n"+
-		"repos/tools/cli      spike/parser  0            3      0       -         no upstream\n"+
-		"sandbox/experiments  main          0            2      0       -         no upstream\n"+
-		"2 of 2 repos need attention\n")
 }
 
 func TestStatusShowsDetachedCommitWithoutCountingItAsNeedingAttention(t *testing.T) {
@@ -202,6 +163,44 @@ func TestStatusJSONCarriesTheSameStateAsTheTable(t *testing.T) {
 		 "upstream": null, "uncommitted": 0, "ahead": 1, "behind": 0,
 		 "needsAttention": true, "stale": null, "fetchedAt": null}
 	]}`)
+}
+
+func TestStatusOnARootWithNoReposPrintsOnlyTheSummary(t *testing.T) {
+	f := gitfixture.New(t)
+	f.Write(f.Path("work"), "notes.txt", "no repos here\n")
+
+	assertOutput(t, githerd(t, f.Env(), f.Path("work"), "status"), "0 of 0 repos need attention\n")
+	assertJSON(t, githerd(t, f.Env(), f.Path("work"), "status", "--json"),
+		`{"root": `+jsonString(t, f.Path("work"))+`, "repos": []}`)
+}
+
+func TestStatusFailsOnAMissingRoot(t *testing.T) {
+	f := gitfixture.New(t)
+
+	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("missing"))
+
+	if got.code != 1 || got.stdout != "" || !strings.Contains(got.stderr, f.Path("missing")) {
+		t.Errorf("want exit 1, no stdout and the root named on stderr; got %+v", got)
+	}
+}
+
+func TestStatusReportsAnUnreadableRepoAndStillListsTheOthers(t *testing.T) {
+	f := gitfixture.New(t)
+	f.Clone(f.Remote("docs"), "work/repos/acme/docs")
+	f.Write(f.Path("work/repos/acme/broken"), ".git", "gitdir: ../nowhere\n")
+
+	got := githerd(t, f.Env(), f.Path("."), "status", f.Path("work"))
+
+	if got.code != 1 || !strings.Contains(got.stderr, "repos/acme/broken") {
+		t.Errorf("want exit 1 and the broken repo named on stderr; got code %d, stderr:\n%s", got.code, got.stderr)
+	}
+	want := "" +
+		"REPO             BRANCH  UNCOMMITTED  AHEAD  BEHIND  UPSTREAM     NOTE\n" +
+		"repos/acme/docs  main    0            0      0       origin/main\n" +
+		"0 of 1 repos need attention\n"
+	if got.stdout != want {
+		t.Errorf("stdout mismatch\n--- got ---\n%s\n--- want ---\n%s", got.stdout, want)
+	}
 }
 
 // assertJSON fails unless the run exited 0 and printed JSON equal to want.

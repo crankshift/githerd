@@ -122,6 +122,10 @@ func readAll(ctx context.Context, dirs []string) ([]status.Repo, []error) {
 }
 
 func printTable(w io.Writer, root string, repos []status.Repo) {
+	if len(repos) == 0 {
+		fmt.Fprintln(w, "0 of 0 repos need attention")
+		return
+	}
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "REPO\tBRANCH\tUNCOMMITTED\tAHEAD\tBEHIND\tUPSTREAM\tNOTE")
