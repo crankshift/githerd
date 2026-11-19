@@ -22,6 +22,8 @@ func railKey(m Model, k Key) (Model, []Cmd) {
 		m.filtering = true
 	case KeyEsc:
 		m.filter = ""
+	case "f":
+		return m.forceFetch()
 	}
 	return m, nil
 }
@@ -239,8 +241,16 @@ func (m Model) counts(w int) Line {
 	if attention > 0 {
 		tally.Color = Yellow
 	}
+	if !m.loaded {
+		return Line{Spans: fit([]Span{{Text: "loading…", Style: Style{Dim: true}}}, w)}
+	}
 	var right []Span
-	if !m.next.IsZero() {
+	switch {
+	case m.forcing:
+		right = []Span{{Text: "fetching…", Style: Style{Color: Cyan}}}
+	case m.refreshing:
+		right = []Span{{Text: "syncing…", Style: Style{Color: Cyan}}}
+	case !m.next.IsZero():
 		secs := int((m.next.Sub(m.now) + time.Second - 1) / time.Second)
 		right = []Span{{Text: fmt.Sprintf("↻ %ds", max(secs, 0)), Style: Style{Dim: true}}}
 	}

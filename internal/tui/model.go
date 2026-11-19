@@ -111,8 +111,10 @@ type Model struct {
 	filter    string // keeps the lines whose path holds its letters in order
 	filtering bool   // keys go to the filter
 
-	refreshing bool      // a Refresh is running
-	next       time.Time // when the next refresh is due
+	refreshing  bool      // a Refresh is running
+	forcing     bool      // the Refresh running fetches whatever the TTL
+	forceQueued bool      // a forced Refresh starts when the one running ends
+	next        time.Time // when the next refresh is due
 }
 
 // New returns the model of a rail that has just opened, and the commands to
@@ -129,6 +131,9 @@ func Update(m Model, msg Msg) (Model, []Cmd) {
 		m.height = msg.Height
 	case Tick:
 		m.now = msg.Now
+		if !m.refreshing && !m.next.IsZero() && !m.now.Before(m.next) {
+			m, cmds = m.refresh(false)
+		}
 	case Loaded:
 		m, cmds = loaded(m, msg)
 	case Key:
@@ -152,12 +157,39 @@ func loaded(m Model, msg Loaded) (Model, []Cmd) {
 			m.selected, m.placed = startRepo(*r, m.opts.Cwd), true
 		}
 	}
-	if msg.Refresh {
-		m.refreshing, m.next = false, msg.At.Add(RefreshEvery)
-		return m, nil
+	if !msg.Refresh {
+		return m.refresh(m.forceQueued) // the first load is in: now refresh
 	}
-	m.refreshing = true
-	return m, []Cmd{Refresh{}}
+	m.refreshing, m.forcing, m.next = false, false, msg.At.Add(RefreshEvery)
+	if m.forceQueued {
+		return m.refresh(true)
+	}
+	return m, nil
+}
+
+// refresh starts a refresh. A forced one fetches every repo of the root
+// shown, whatever the TTL.
+func (m Model) refresh(force bool) (Model, []Cmd) {
+	m.refreshing, m.forcing, m.forceQueued = true, force, false
+	var r Refresh
+	if root := m.shown(); force && root != nil {
+		for _, repo := range root.Repos {
+			r.Force = append(r.Force, repo.Dir)
+		}
+	}
+	return m, []Cmd{r}
+}
+
+// forceFetch starts a forced refresh, or has one start when the load or
+// refresh running ends. A forced refresh running already is enough.
+func (m Model) forceFetch() (Model, []Cmd) {
+	if m.loaded && !m.refreshing {
+		return m.refresh(true)
+	}
+	if !m.forcing {
+		m.forceQueued = true
+	}
+	return m, nil
 }
 
 // shown returns the root the rail shows, or nil when no roots are

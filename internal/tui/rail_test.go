@@ -2,8 +2,10 @@ package tui_test
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -153,6 +155,104 @@ func TestRailExplainsHowToConfigureRootsWhenThereAreNone(t *testing.T) {
 	if got, want := selected(m, 50, 18), "repos/acme/api"+strings.Repeat(" ", 31)+"●3 ⇡2"; got != want {
 		t.Errorf("once roots are listed, the rail starts on %q, want %q", got, want)
 	}
+}
+
+// header returns the first line of the rail's view at 50×18.
+func header(m tui.Model) string { return tui.View(m, 50, 18)[0].Text() }
+
+// assertCmds fails unless got are want.
+func assertCmds(t *testing.T, when string, got []tui.Cmd, want ...tui.Cmd) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) && (len(got) > 0 || len(want) > 0) {
+		t.Errorf("%s: commands %#v, want %#v", when, got, want)
+	}
+}
+
+// The rail first reads the repos from disk, which is quick, then runs the
+// refresh `githerd herdr sync` runs. It refreshes again 30 seconds after
+// each refresh ends, never two at once, and the header counts down.
+func TestRailRefreshesEveryThirtySecondsAfterTheLastRefresh(t *testing.T) {
+	m, cmds := tui.New(tui.Options{Now: t0, Cwd: "/work"})
+	assertCmds(t, "on open", cmds, tui.Load{})
+	if got, want := strings.TrimSpace(header(m)), "loading…"; got != want {
+		t.Errorf("before the first load, the header shows %q, want %q", got, want)
+	}
+
+	m, cmds = tui.Update(m, tui.Loaded{At: t0, Roots: []tui.Root{work()}})
+	assertCmds(t, "after the first load", cmds, tui.Refresh{})
+	if got, want := header(m), "6/10 need attention · 1 stale"+strings.Repeat(" ", 13)+"syncing…"; got != want {
+		t.Errorf("during the refresh, the header shows %q, want %q", got, want)
+	}
+
+	m, cmds = tui.Update(m, tui.Loaded{At: t0.Add(2 * time.Second), Roots: []tui.Root{work()}, Refresh: true, Synced: true})
+	assertCmds(t, "after the refresh", cmds)
+	for _, tick := range []struct {
+		after time.Duration
+		shows string
+		cmds  []tui.Cmd
+	}{
+		{3 * time.Second, "↻ 29s", nil},
+		{31 * time.Second, "↻ 1s", nil},
+		{32 * time.Second, "syncing…", []tui.Cmd{tui.Refresh{}}},
+		{40 * time.Second, "syncing…", nil},
+	} {
+		m, cmds = tui.Update(m, tui.Tick{Now: t0.Add(tick.after)})
+		assertCmds(t, fmt.Sprintf("at %v", tick.after), cmds, tick.cmds...)
+		if got := header(m); !strings.HasSuffix(got, " "+tick.shows) {
+			t.Errorf("at %v, the header shows %q, want it to end in %q", tick.after, got, tick.shows)
+		}
+	}
+
+	m, _ = tui.Update(m, tui.Loaded{At: t0.Add(41 * time.Second), Roots: []tui.Root{work()}, Refresh: true, Synced: true})
+	m, cmds = tui.Update(m, tui.Tick{Now: t0.Add(50 * time.Second)})
+	assertCmds(t, "9s after the second refresh", cmds)
+	if got := header(m); !strings.HasSuffix(got, " ↻ 21s") {
+		t.Errorf("9s after the second refresh, the header shows %q, want it to end in ↻ 21s", got)
+	}
+}
+
+// dirs returns the Dir of each repo of root.
+func dirs(root tui.Root) []string {
+	var out []string
+	for _, r := range root.Repos {
+		out = append(out, r.Dir)
+	}
+	return out
+}
+
+// f refreshes at once and fetches every repo of the root shown, whatever
+// the TTL. Pressed while a refresh or the first load runs, it waits for
+// that to end, and pressing it again meanwhile adds nothing.
+func TestRailForcesAFetchWithF(t *testing.T) {
+	projects := tui.Root{Name: "~/projects", Dir: "/projects", Repos: []tui.Repo{
+		repo("/projects/site", status.Repo{Branch: "main", Upstream: "origin/main"}),
+	}}
+	forced := tui.Refresh{Force: dirs(work())}
+
+	m := railModel(t, "/work", work(), projects)
+	m, cmds := press(m, "f")
+	assertCmds(t, "f", cmds, forced)
+	if got := header(m); !strings.HasSuffix(got, " fetching…") {
+		t.Errorf("during a forced refresh, the header shows %q, want it to end in fetching…", got)
+	}
+	m, cmds = press(m, "f")
+	assertCmds(t, "f during the forced refresh", cmds)
+	m, cmds = tui.Update(m, tui.Loaded{At: t0.Add(5 * time.Second), Roots: []tui.Root{work(), projects}, Refresh: true, Synced: true})
+	assertCmds(t, "after the forced refresh", cmds)
+
+	m, _ = tui.Update(m, tui.Tick{Now: t0.Add(35 * time.Second)})
+	m, cmds = press(m, "f", "f")
+	assertCmds(t, "f during an ordinary refresh", cmds)
+	m, cmds = tui.Update(m, tui.Loaded{At: t0.Add(36 * time.Second), Roots: []tui.Root{work(), projects}, Refresh: true, Synced: true})
+	assertCmds(t, "after the ordinary refresh", cmds, forced)
+	m, cmds = tui.Update(m, tui.Loaded{At: t0.Add(40 * time.Second), Roots: []tui.Root{work(), projects}, Refresh: true, Synced: true})
+	assertCmds(t, "after the queued forced refresh", cmds)
+
+	m, _ = tui.New(tui.Options{Now: t0, Cwd: "/projects"})
+	m, cmds = press(m, "f")
+	assertCmds(t, "f before the first load", cmds)
+	_, cmds = tui.Update(m, tui.Loaded{At: t0, Roots: []tui.Root{work(), projects}})
+	assertCmds(t, "after the first load", cmds, tui.Refresh{Force: dirs(projects)})
 }
 
 // selected returns the text of the selected line of the view, without the
